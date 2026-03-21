@@ -69,10 +69,20 @@ input[type=file]{display:none}
 .metric-card.m-b{border-top:3px solid #ffb830}
 .metric-card.m-c{border-top:3px solid #c084fc}
 .metric-card.m-bh{border-top:3px solid #3d4a66}
-.m-title{font-size:12px;color:#6b7a99;font-weight:700;margin-bottom:10px;text-transform:uppercase}
-.m-row{display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px;border-bottom:1px dashed #252d3d;padding-bottom:3px}
+.m-title{font-size:12px;color:#6b7a99;font-weight:700;margin-bottom:8px;text-transform:uppercase}
+.m-mode-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:2px 7px;border-radius:2px;margin-bottom:5px;display:inline-block}
+.m-mode-compound{background:#00e5a015;color:#00e5a0;border:1px solid #00e5a030}
+.m-mode-linear{background:#ffb83015;color:#ffb830;border:1px solid #ffb83030}
+.m-row{display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;border-bottom:1px dashed #1a2030;padding-bottom:2px}
 .m-row:last-child{border-bottom:none}
 .m-val{font-family:‘IBM Plex Mono’,monospace;font-weight:700}
+.m-divider{height:1px;background:#252d3d;margin:7px 0}
+
+/* ── 圖表模式切換 ── */
+.chart-mode-bar{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+.chart-mode-btn{padding:5px 14px;font-size:11px;font-weight:700;border:1px solid #3a4560;background:transparent;color:#6b7a99;border-radius:2px;cursor:pointer;font-family:inherit;transition:.15s}
+.chart-mode-btn.active{background:#1a2030;color:#e2eaf8;border-color:#7eb8ff}
+.chart-mode-hint{font-size:11px;color:#3a4560;font-family:‘IBM Plex Mono’,monospace}
 
 /* ── 目前狀態 ── */
 .status-block{background:#12161f;border:1px solid #3a4560;margin-bottom:14px;overflow:hidden}
@@ -324,7 +334,14 @@ input[type=file]{display:none}
 
   <!-- 圖表 -->
 
-  <div class="chart-wrap"><canvas id="navChart" height="320"></canvas></div>
+  <div class="chart-wrap">
+    <div class="chart-mode-bar">
+      <button class="chart-mode-btn active" id="btnCompound" onclick="setChartMode('compound',this)">📈 複利模式</button>
+      <button class="chart-mode-btn" id="btnLinear" onclick="setChartMode('linear',this)">📊 單利模式（固定單位）</button>
+      <span class="chart-mode-hint" id="chartModeHint">每日重平衡 × 倉位倍數</span>
+    </div>
+    <canvas id="navChart" height="300"></canvas>
+  </div>
 
   <!-- 交易歷程 -->
 
@@ -367,6 +384,9 @@ let navChart = null;
 // 儲存四份交易歷程供切換
 let allTrades = {orig:[], a:[], b:[], c:[]};
 let currentTradeMethod = 'orig';
+// 儲存兩套曲線供圖表切換
+let curveData = {};
+let chartMode = 'compound';
 
 const lerp = (x,x0,x1,y0,y1) => y0+(y1-y0)*Math.max(0,Math.min(1,(x-x0)/(x1-x0)));
 const $ = id => document.getElementById(id);
@@ -778,6 +798,10 @@ function runBacktest(){
 
       let eq=100,eqA=100,eqB=100,eqC=100,bh=100;
       const cOrig=[100],cA=[100],cB=[100],cC=[100],cBH=[100],labels=[dates[0]];
+      // 單利曲線：固定單位 = 100 / initSP，每日累加 pos × units × 點差
+      const units=100/initSP;
+      let lEq=100,lEqA=100,lEqB=100,lEqC=100,lBH=100;
+      const lOrig=[100],lA=[100],lB=[100],lC=[100],lBHC=[100];
 
       allTrades={orig:[],a:[],b:[],c:[]};
       let prevOrig=null,prevA=null,prevB=null,prevC=null;
@@ -827,15 +851,37 @@ function runBacktest(){
         dayData.push({date:dates[i], sOrig, sA:sAv, sB:sBv, regime:reg,
           posOrig, posA:posAv, posB:posBv, posC:posCv, rsi:rsiVal});
 
+        // 複利（每日重平衡）
+        const ptDiff = spA[i]-spA[i-1];
         eq*=(1+posOrig*ret); eqA*=(1+posAv*ret);
         eqB*=(1+posBv*ret); eqC*=(1+posCv*ret);
         bh=100*(spA[i]/initSP);
         cOrig.push(eq); cA.push(eqA); cB.push(eqB); cC.push(eqC); cBH.push(bh);
+
+        // 單利（固定單位，純價差累加）
+        lEq  += posOrig * units * ptDiff;
+        lEqA += posAv   * units * ptDiff;
+        lEqB += posBv   * units * ptDiff;
+        lEqC += posCv   * units * ptDiff;
+        lBH  += 1       * units * ptDiff;
+        lOrig.push(lEq); lA.push(lEqA); lB.push(lEqB); lC.push(lEqC); lBHC.push(lBH);
+
         labels.push(dates[i]);
       }
 
-      // ── 績效卡 ──
-      const stats=[calcStats(cOrig),calcStats(cA),calcStats(cB),calcStats(cC),calcStats(cBH)];
+      // ── 儲存兩套曲線 ──
+      const step=Math.max(1,Math.floor(labels.length/150));
+      const smpl=(arr)=>arr.filter((_,i)=>i%step===0);
+      const lblS=smpl(labels);
+      curveData={
+        labels:lblS,
+        compound:[smpl(cOrig),smpl(cA),smpl(cB),smpl(cC),smpl(cBH)],
+        linear:  [smpl(lOrig),smpl(lA), smpl(lB), smpl(lC), smpl(lBHC)]
+      };
+
+      // ── 績效卡（雙列：複利 + 單利） ──
+      const statsC=[calcStats(cOrig),calcStats(cA),calcStats(cB),calcStats(cC),calcStats(cBH)];
+      const statsL=[calcStats(lOrig),calcStats(lA), calcStats(lB), calcStats(lC), calcStats(lBHC)];
       const cards=[
         {cls:'m-orig',label:'原始策略',color:'#00e5a0'},
         {cls:'m-a',   label:'方法 A｜HY Delta',color:'#7eb8ff'},
@@ -843,16 +889,25 @@ function runBacktest(){
         {cls:'m-c',   label:'方法 C｜OR 複合',color:'#c084fc'},
         {cls:'m-bh',  label:'Buy & Hold',color:'#6b7a99'},
       ];
+      const mRow=(label,val,col)=>`<div class="m-row"><span>${label}</span><span class="m-val" style="${col?'color:'+col:''}">${val}</span></div>`;
+      const fmtPct=(s,v)=>s[v]==='--'?'--':(parseFloat(s[v])>=0?'+':'')+s[v]+'%';
       $('metricsGrid').innerHTML=cards.map((c,ci)=>{
-        const s=stats[ci];
-        const totColor=s.total==='--'?'#6b7a99':parseFloat(s.total)>=0?'#00e5a0':'#ff4d6d';
+        const sc=statsC[ci], sl=statsL[ci];
+        const tcC=parseFloat(sc.total)>=0?'#00e5a0':'#ff4d6d';
+        const tcL=parseFloat(sl.total)>=0?'#00e5a0':'#ff4d6d';
         return`<div class="metric-card ${c.cls}">
           <div class="m-title" style="color:${c.color}">${c.label}</div>
-          <div class="m-row"><span>區間報酬</span><span class="m-val" style="color:${totColor}">${s.total==='--'?s.total:(s.total>=0?'+':'')+s.total+'%'}</span></div>
-          <div class="m-row"><span>CAGR</span><span class="m-val">${s.cagr==='--'?s.cagr:s.cagr+'%'}</span></div>
-          <div class="m-row"><span>MDD</span><span class="m-val" style="color:#ff4d6d">${s.mdd==='--'?s.mdd:s.mdd+'%'}</span></div>
-          <div class="m-row"><span>Sharpe</span><span class="m-val" style="color:#00e5a0">${s.sharpe}</span></div>
-          <div class="m-row"><span>StdDev</span><span class="m-val">${s.std==='--'?s.std:s.std+'%'}</span></div>
+          <div class="m-mode-label m-mode-compound">複利</div>
+          ${mRow('區間報酬',fmtPct(sc,'total'),tcC)}
+          ${mRow('CAGR',sc.cagr==='--'?'--':sc.cagr+'%','')}
+          ${mRow('MDD',sc.mdd==='--'?'--':sc.mdd+'%','#ff4d6d')}
+          ${mRow('Sharpe',sc.sharpe,'#00e5a0')}
+          <div class="m-divider"></div>
+          <div class="m-mode-label m-mode-linear">單利</div>
+          ${mRow('區間報酬',fmtPct(sl,'total'),tcL)}
+          ${mRow('CAGR',sl.cagr==='--'?'--':sl.cagr+'%','')}
+          ${mRow('MDD',sl.mdd==='--'?'--':sl.mdd+'%','#ff4d6d')}
+          ${mRow('Sharpe',sl.sharpe,'#ffb830')}
         </div>`;
       }).join('');
 
@@ -863,39 +918,18 @@ function runBacktest(){
 
       // ── 交易歷程（預設顯示原始） ──
       $('tradesBlock').style.display='';
-      // 重設 tab 樣式
       document.querySelectorAll('.method-tab').forEach((t,i)=>{
         t.className='method-tab'+(i===0?' active-orig':'');
       });
       currentTradeMethod='orig';
       renderTradeTable(allTrades.orig,'orig');
 
-      // ── 圖表 ──
-      const step=Math.max(1,Math.floor(labels.length/150));
-      const smpl=(arr)=>arr.filter((_,i)=>i%step===0);
-      const lblS=smpl(labels);
-
-      if(navChart){navChart.destroy();navChart=null;}
-      navChart=new Chart($('navChart').getContext('2d'),{
-        type:'line',
-        data:{labels:lblS,datasets:[
-          {label:'原始策略',data:smpl(cOrig),borderColor:'#00e5a0',borderWidth:2,pointRadius:0,tension:.1},
-          {label:'方法 A',  data:smpl(cA),   borderColor:'#7eb8ff',borderWidth:1.5,pointRadius:0,tension:.1},
-          {label:'方法 B',  data:smpl(cB),   borderColor:'#ffb830',borderWidth:1.5,pointRadius:0,tension:.1},
-          {label:'方法 C',  data:smpl(cC),   borderColor:'#c084fc',borderWidth:1.5,pointRadius:0,tension:.1},
-          {label:'B&H',     data:smpl(cBH),  borderColor:'#3a4560',borderWidth:1,  pointRadius:0,tension:.1},
-        ]},
-        options:{
-          responsive:true,maintainAspectRatio:false,
-          interaction:{mode:'index',intersect:false},
-          animation:{duration:300},
-          plugins:{legend:{labels:{color:'#6b7a99',boxWidth:10,font:{size:12}}}},
-          scales:{
-            x:{ticks:{color:'#6b7a99',maxTicksLimit:8,font:{size:11}},grid:{color:'#1a2030'}},
-            y:{ticks:{color:'#6b7a99',font:{size:11}},grid:{color:'#1a2030'}}
-          }
-        }
-      });
+      // ── 圖表（預設複利） ──
+      chartMode='compound';
+      $('btnCompound').classList.add('active');
+      $('btnLinear').classList.remove('active');
+      $('chartModeHint').textContent='每日重平衡 × 倉位倍數';
+      drawChart();
 
       const tabs=document.querySelectorAll('.tab');
       switchTab({target:tabs[2]},'result');
@@ -906,6 +940,48 @@ function runBacktest(){
       $('loadingOverlay').classList.add('hidden');
     }
   },80);
+}
+
+// ── 圖表繪製（可切換複利/單利） ──
+const CHART_COLORS=[
+  {label:'原始策略',border:'#00e5a0',width:2},
+  {label:'方法 A',  border:'#7eb8ff',width:1.5},
+  {label:'方法 B',  border:'#ffb830',width:1.5},
+  {label:'方法 C',  border:'#c084fc',width:1.5},
+  {label:'B&H',     border:'#3a4560',width:1},
+];
+function drawChart(){
+  if(!curveData.labels) return;
+  const curves = chartMode==='compound' ? curveData.compound : curveData.linear;
+  const datasets = CHART_COLORS.map((c,i)=>({
+    label:c.label, data:curves[i],
+    borderColor:c.border, borderWidth:c.width, pointRadius:0, tension:.1
+  }));
+  if(navChart){navChart.destroy();navChart=null;}
+  navChart=new Chart($('navChart').getContext('2d'),{
+    type:'line',
+    data:{labels:curveData.labels, datasets},
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      animation:{duration:200},
+      plugins:{legend:{labels:{color:'#6b7a99',boxWidth:10,font:{size:12}}}},
+      scales:{
+        x:{ticks:{color:'#6b7a99',maxTicksLimit:8,font:{size:11}},grid:{color:'#1a2030'}},
+        y:{ticks:{color:'#6b7a99',font:{size:11}},grid:{color:'#1a2030'}}
+      }
+    }
+  });
+}
+
+function setChartMode(mode, btn){
+  chartMode=mode;
+  document.querySelectorAll('.chart-mode-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  $('chartModeHint').textContent = mode==='compound'
+    ? '每日重平衡 × 倉位倍數'
+    : '固定單位（100÷起始SP）× 點差累加，純 Alpha 能力';
+  drawChart();
 }
 
 // ── Tab 切換 ──
