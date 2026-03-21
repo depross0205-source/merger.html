@@ -502,12 +502,15 @@ function sortAndFill(){
   updateStatus();
 }
 
-function updateStatus(){
+// preserveDate=true 時保留使用者已輸入的日期，不覆蓋（手動新增後呼叫）
+function updateStatus(preserveDate){
   $('dbCount').textContent=DB.length+' 筆';
   $('dbRange').textContent=DB.length>0?DB[0].d+' → '+DB[DB.length-1].d:'--';
   if(DB.length>0){
     const l=DB[DB.length-1];
-    $('dbDate').value=new Date().toISOString().slice(0,10);
+    // 只在非保留模式下重設日期（初始載入、CSV 匯入、自動抓取）
+    if(!preserveDate) $('dbDate').value=new Date().toISOString().slice(0,10);
+    // 其他欄位：填入最後一筆作為下次輸入的預設值
     $('dbSP').value=l.sp.toFixed(2); $('dbEW').value=l.ew.toFixed(2);
     $('dbVIX').value=l.vix.toFixed(2); $('dbHY').value=l.hy.toFixed(4);
     $('dbTIPS').value=l.tips.toFixed(2);
@@ -630,21 +633,47 @@ async function fetchAndMerge(){
 // ════════════════════════════════════════
 function manualAdd(){
   const d=$('dbDate').value;
-  const sp=parseFloat($('dbSP').value), ew=parseFloat($('dbEW').value);
-  const vix=parseFloat($('dbVIX').value), hy=parseFloat($('dbHY').value);
-  const tips=parseFloat($('dbTIPS').value);
-  const y10=parseFloat($('dbY10').value), y2=parseFloat($('dbY2').value);
-  if(!d||isNaN(sp)||isNaN(vix)||isNaN(hy)||isNaN(tips)){alert('日期、SP500、VIX、HY、TIPS 為必填！');return;}
-  const lastCAPE=DB.length>0?DB[DB.length-1].cape:30;
+  if(!d){alert('日期為必填！');return;}
+  const sp=parseFloat($('dbSP').value);
+  if(isNaN(sp)){alert('S&P 500 為必填！');return;}
+
+  // 沿用上一筆（假日 VIX/HY/TIPS/Y10/Y2 通常不更新，自動帶入即可）
+  const prev=DB.length>0?DB[DB.length-1]:{};
+  const fallback=(raw,key,def)=>{
+    const v=parseFloat(raw);
+    return isNaN(v)?(prev[key]!=null?prev[key]:def):v;
+  };
+
+  const ew   =fallback($('dbEW').value,  'ew',   sp);
+  const vix  =fallback($('dbVIX').value, 'vix',  18);
+  const hy   =fallback($('dbHY').value,  'hy',   3.5);
+  const tips =fallback($('dbTIPS').value,'tips', 1.5);
+  const y10  =fallback($('dbY10').value, 'y10',  4.0);
+  const y2   =fallback($('dbY2').value,  'y2',   3.8);
   const capeRaw=$('dbCAPE').value;
-  const cape=capeRaw===''||isNaN(parseFloat(capeRaw))?lastCAPE:parseFloat(capeRaw);
-  const lastY10=DB.length>0?DB[DB.length-1].y10:4.0;
-  const lastY2=DB.length>0?DB[DB.length-1].y2:3.8;
-  const row={d,sp,ew:isNaN(ew)?sp:ew,vix,hy,tips,cape,
-    y10:isNaN(y10)?lastY10:y10,y2:isNaN(y2)?lastY2:y2};
+  const cape =fallback(capeRaw,          'cape', 30);
+
+  const row={d,sp,ew,vix,hy,tips,cape,y10,y2};
   const ei=DB.findIndex(x=>x.d===d);
   if(ei>-1) DB[ei]=row; else DB.push(row);
-  sortAndFill(); alert('✅ '+d+' 已'+(ei>-1?'覆蓋':'新增'));
+
+  // sortAndFill 後傳入 preserveDate=true，保留使用者填入的日期
+  DB.sort((a,b)=>a.d.localeCompare(b.d));
+  let last={sp:5000,ew:5000,vix:18,hy:3.5,tips:1.5,cape:30,y10:4.0,y2:3.8};
+  DB.forEach(r=>{
+    ['sp','ew','vix','hy','tips','cape','y10','y2'].forEach(k=>{
+      if(r[k]==null||isNaN(r[k])) r[k]=last[k]; else last[k]=r[k];
+    });
+  });
+  updateStatus(true); // preserveDate：不重設日期欄位
+
+  // 在沿用欄位旁顯示提示
+  const usedFallback=[];
+  if(isNaN(parseFloat($('dbVIX').value)))  usedFallback.push('VIX');
+  if(isNaN(parseFloat($('dbHY').value)))   usedFallback.push('HY');
+  if(isNaN(parseFloat($('dbTIPS').value))) usedFallback.push('TIPS');
+  const note=usedFallback.length?`（${usedFallback.join('、')} 沿用前日）`:'';
+  alert(`✅ ${d} 已${ei>-1?'覆蓋':'新增'}${note}`);
 }
 
 // 步驟四：匯出
@@ -765,7 +794,11 @@ function preWeeklyRSI(SP, DATES){
   const N=SP.length, arr=new Float64Array(N).fill(50);
   const wEnds=[];
   for(let i=0;i<N-1;i++)
-    if(new Date(DATES[i]).getDay()>=new Date(DATES[i+1]).getDay()) wEnds.push(i);
+    // 用日曆天數差取代 getDay()：間距≥2天代表跨越週末或連假
+    // 避免手動插入的假日（如週六/日）錯誤觸發週邊界
+    const gap=((new Date(DATES[i+1]))-(new Date(DATES[i])))/(864e5);
+    if(gap>=2) wEnds.push(i);
+  }
   wEnds.push(N-1);
   const W=wEnds.length; if(W<16) return arr;
   let avgG=0, avgL=0;
@@ -918,7 +951,11 @@ function runBacktest(){
       const logs=[];  // 按時序累積，不 reverse
 
       for(let i=1;i<N;i++){
-        const ret=(SP[i]-SP[i-1])/SP[i-1];
+        // 假日處理：週六(6)/週日(0) → 市場收盤，報酬強制為 0
+        // 手動插入的假日不應產生虛假損益
+        const dow=new Date(DATES[i]).getDay();
+        const isHoliday=(dow===0||dow===6);
+        const ret=isHoliday?0:(SP[i]-SP[i-1])/SP[i-1];
         const hN=HY100[i];
         const f1=lerp((100/CAPE[i])-TIPS[i],0,4,10,100);
         const f5b=lerp(hN,250,600,80,20);
@@ -972,7 +1009,9 @@ function runBacktest(){
             sp:SP[i].toFixed(1),s:newSA,ps:psA,db:dbA,clearDays:cfg.A.clearDays,
             hits:stk.hits.filter(h=>!h.endsWith('✗')).join(' ')});
         }
-        eqA*=(1+nA.p*ret*(1-(nA.p!==pA?cfg.cost:0)));
+        // ★ 修正1：今日報酬用「舊倉 pA」，訊號在收盤後才切換到 nA.p（隔日生效）
+        // ★ 修正2：手續費 = |新倉−舊倉| × cost，對「換倉量」收費，不是乘在報酬上
+        eqA *= (1 + pA * ret - Math.abs(nA.p - pA) * cfg.cost);
         psA=newSA; sA=newSA; pA=nA.p; mA=nA.m;
         f1A=Math.round(f1); f5A=Math.round(f5b); ycA=Math.round(ycScore);
 
@@ -995,7 +1034,8 @@ function runBacktest(){
             sp:SP[i].toFixed(1),s:newSB,ps:psB,db:dbB,clearDays:cfg.B.clearDays,
             hits:stk.hits.filter(h=>!h.endsWith('✗')).join(' ')});
         }
-        eqB*=(1+nB.p*ret*(1-(nB.p!==pB?cfg.cost:0)));
+        // ★ 同上修正：舊倉 pB 賺今日報酬，換倉量收手續費
+        eqB *= (1 + pB * ret - Math.abs(nB.p - pB) * cfg.cost);
         psB=newSB; sB=newSB; pB=nB.p; mB=nB.m;
         f1B=Math.round(f1); f5B=Math.round(f5b); ycB=Math.round(ycScore);
 
@@ -1008,7 +1048,8 @@ function runBacktest(){
         if(newMC!==mC) logs.push({d:DATES[i],mtd:'C',type:'change',fm:mC,to:newMC,
           sp:SP[i].toFixed(1),s:'--',ps:'--',db:'--',clearDays:'--',hits:''});
         const newPC=newMC==='NORMAL'?cfg.pos.base:0;
-        eqC*=(1+newPC*ret*(1-(newPC!==pC?cfg.cost:0)));
+        // ★ 同上修正
+        eqC *= (1 + pC * ret - Math.abs(newPC - pC) * cfg.cost);
         pC=newPC; mC=newMC;
 
         // ── Method D ──
@@ -1022,7 +1063,8 @@ function runBacktest(){
         if(newMD!==mD) logs.push({d:DATES[i],mtd:'D',type:'change',fm:mD,to:newMD,
           sp:SP[i].toFixed(1),s:'--',ps:'--',db:'--',clearDays:'--',hits:''});
         const newPD=newMD==='PLUS'?cfg.pos.max:(newMD==='NORMAL'?cfg.pos.base:(newMD==='STRIKE'?cfg.pos.strike:0));
-        eqD*=(1+newPD*ret*(1-(newPD!==pD?cfg.cost:0)));
+        // ★ 同上修正
+        eqD *= (1 + pD * ret - Math.abs(newPD - pD) * cfg.cost);
         pD=newPD; mD=newMD;
 
         eqBH=cfg.cap*(SP[i]/sp0);
