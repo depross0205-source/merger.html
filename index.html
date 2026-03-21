@@ -331,7 +331,10 @@ input[type=file]{display:none}
   <div class="trades-block" id="tradesBlock" style="display:none">
     <div class="trades-header">
       <div class="trades-title">📋 買賣歷程</div>
-      <div class="trades-count" id="tradesCount"></div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <div class="trades-count" id="tradesCount"></div>
+        <button onclick="exportTrades()" style="width:auto;padding:5px 12px;font-size:11px;background:#252d3d;color:#7eb8ff;border:1px solid #3a4560;border-radius:3px;cursor:pointer;font-weight:700">⬇ 匯出 CSV</button>
+      </div>
     </div>
     <div class="method-tabs" id="methodTabs">
       <button class="method-tab active-orig" onclick="switchTrades('orig',this)">原始策略</button>
@@ -345,7 +348,8 @@ input[type=file]{display:none}
           <tr>
             <th>#</th><th>日期</th><th>S&P 500</th>
             <th>ShieldA</th><th>ShieldB</th>
-            <th>Regime</th><th>倉位變化</th><th>方向</th><th>備註</th>
+            <th>Regime</th><th>倉位變化</th><th>方向</th>
+            <th>本金現值</th><th>備註</th>
           </tr>
         </thead>
         <tbody id="tradeBody"></tbody>
@@ -685,7 +689,6 @@ function tradeTag(from,to){
   if(to<=0.31)return'<span class="tag-strk">短打</span>';
   return'<span class="tag-reduce">減碼</span>';
 }
-
 function renderTradeTable(trades, method){
   const reversed=[...trades].reverse();
   $('tradesCount').textContent=trades.length+' 筆換手（'+{orig:'原始策略',a:'方法A',b:'方法B',c:'方法C'}[method]+')';
@@ -693,6 +696,7 @@ function renderTradeTable(trades, method){
     const n=trades.length-idx;
     const pFrom=t.from.toFixed(1)+'×', pTo=t.to.toFixed(1)+'×';
     const toColor=t.to>t.from?'#00e5a0':t.to===0?'#ff4d6d':'#ffb830';
+    const eqColor=t.equity>=100?'#00e5a0':'#ff4d6d';
     return`<tr>
       <td style="color:#3a4560">${n}</td>
       <td style="color:#e2eaf8">${t.date}</td>
@@ -702,12 +706,35 @@ function renderTradeTable(trades, method){
       <td>${t.regime==='ON'?'<span style="color:#00e5a0">ON</span>':t.regime==='OFF'?'<span style="color:#ff4d6d">OFF</span>':'<span style="color:#ffb830">MID</span>'}</td>
       <td>${pFrom}<span class="arrow">→</span><span style="color:${toColor};font-weight:700">${pTo}</span></td>
       <td>${tradeTag(t.from,t.to)}</td>
+      <td style="color:${eqColor};font-weight:700">${t.equity.toFixed(2)}</td>
       <td style="color:#6b7a99;font-size:11px">${t.note}</td>
     </tr>`;
   }).join('');
 }
 
-function switchTrades(method, btn){
+function exportTrades(){
+  const trades=allTrades[currentTradeMethod];
+  if(!trades||trades.length===0){alert('目前無換手記錄可匯出');return;}
+  const methodLabel={orig:'原始策略',a:'方法A',b:'方法B',c:'方法C'}[currentTradeMethod];
+  const header='#,日期,SP500,ShieldA,ShieldB,Regime,倉位前,倉位後,方向,本金現值,備註';
+  const dirLabel=t=>t.to>t.from&&t.from===0?'進場':t.to===0?'出場':t.to>t.from?'加碼':t.to<=0.31?'短打':'減碼';
+  const rows=trades.map((t,i)=>[
+    i+1, t.date, t.sp,
+    t.sA.toFixed(1), t.sB.toFixed(1),
+    t.regime,
+    t.from.toFixed(1)+'x', t.to.toFixed(1)+'x',
+    dirLabel(t),
+    t.equity.toFixed(2),
+    '"'+t.note+'"'
+  ].join(','));
+  const blob=new Blob([[header,...rows].join('\n')],{type:'text/csv;charset=utf-8;'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='Shield_trades_'+methodLabel+'_'+new Date().toISOString().slice(0,10)+'.csv';
+  a.style.display='none'; document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+
+
   currentTradeMethod=method;
   // 重設所有 tab 樣式
   document.querySelectorAll('.method-tab').forEach(t=>{
@@ -782,18 +809,19 @@ function runBacktest(){
         const posBv  =resolvePos(sBv,   reg, rsiVal, vixA[i], cfg, skB);
         const posCv  =resolvePosC(sAv, sBv, reg, rsiVal, vixA[i], cfg, skC);
 
-        // 記錄換手（原始策略）
-        const recordTrade=(trades,prev,pos,shield_a,shield_b)=>{
+        // 記錄換手（含本金現值）
+        const recordTrade=(trades,prev,pos,shield_a,shield_b,equity)=>{
           if(prev!==null&&pos!==prev){
             let note='盾A '+shield_a.toFixed(0)+' 盾B '+shield_b.toFixed(0);
             if(pos===cfg.posStrk) note+=' | 短打 RSI'+rsiVal.toFixed(0)+' VIX'+vixA[i].toFixed(1);
-            trades.push({date:dates[i],sp:spA[i].toFixed(2),sA:shield_a,sB:shield_b,regime:reg,from:prev,to:pos,note});
+            trades.push({date:dates[i],sp:spA[i].toFixed(2),sA:shield_a,sB:shield_b,
+              regime:reg,from:prev,to:pos,equity:+equity.toFixed(2),note});
           }
         };
-        recordTrade(allTrades.orig, prevOrig, posOrig, sOrig, sOrig);
-        recordTrade(allTrades.a,    prevA,    posAv,   sAv,   sAv  );
-        recordTrade(allTrades.b,    prevB,    posBv,   sBv,   sBv  );
-        recordTrade(allTrades.c,    prevC,    posCv,   sAv,   sBv  );
+        recordTrade(allTrades.orig, prevOrig, posOrig, sOrig, sOrig, eq);
+        recordTrade(allTrades.a,    prevA,    posAv,   sAv,   sAv,   eqA);
+        recordTrade(allTrades.b,    prevB,    posBv,   sBv,   sBv,   eqB);
+        recordTrade(allTrades.c,    prevC,    posCv,   sAv,   sBv,   eqC);
 
         prevOrig=posOrig; prevA=posAv; prevB=posBv; prevC=posCv;
 
