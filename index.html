@@ -1,207 +1,1021 @@
 <!DOCTYPE html>
+
 <html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>矛與盾 V8.4 Full</title>
+<title>矛與盾 V8.3</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-
 <style>
-body{
-  background:#0a0c10;
-  color:#e2eaf8;
-  font-family:'IBM Plex Sans',sans-serif;
-  padding:20px;
-}
-button{
-  padding:10px;
-  margin:5px;
-  cursor:pointer;
-}
-input{
-  padding:5px;
-  margin:5px;
-}
-.section{
-  border:1px solid #333;
-  padding:10px;
-  margin-bottom:15px;
-}
-</style>
-</head>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0a0c10;color:#e2eaf8;font-family:'IBM Plex Sans',sans-serif;padding:20px;font-size:14px;line-height:1.6}
+h2{color:#f8faff;margin-bottom:14px;font-size:20px;font-weight:900}
 
+.tabs{display:flex;border-bottom:2px solid #252d3d;margin-bottom:20px;overflow-x:auto;white-space:nowrap}
+.tab{padding:10px 22px;font-size:14px;font-weight:600;cursor:pointer;color:#6b7a99;border:none;border-bottom:3px solid transparent;background:none;transition:.15s;font-family:inherit}
+.tab.active{color:#7eb8ff;border-bottom-color:#7eb8ff}
+.panel{display:none}.panel.active{display:block}
+
+.step-block{border:1px solid #252d3d;margin-bottom:14px;background:#12161f}
+.step-header{display:flex;align-items:center;gap:10px;padding:11px 14px;border-bottom:1px solid #252d3d;background:#1a2030}
+.step-num{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:900;flex-shrink:0}
+.s1{background:#7eb8ff;color:#000}.s2{background:#4d9fff;color:#000}.s3{background:#ffb830;color:#000}.s4{background:#00e5a0;color:#000}
+.step-title-text{font-weight:700;color:#f8faff;font-size:14px}
+.step-subtitle{font-size:12px;color:#6b7a99;margin-top:1px}
+.step-body{padding:14px}
+
+.field{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}
+.field label{font-size:11px;color:#6b7a99;font-weight:700;text-transform:uppercase}
+input[type=text],input[type=number],input[type=date],select{
+background:#0a0c10;border:1px solid #3a4560;color:#e2eaf8;
+padding:8px 10px;border-radius:3px;font-size:13px;font-family:‘IBM Plex Mono’,monospace;width:100%}
+input:focus,select:focus{outline:none;border-color:#7eb8ff}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.span2{grid-column:span 2}
+
+button{padding:10px 18px;border:none;border-radius:3px;cursor:pointer;font-size:14px;font-weight:700;font-family:inherit;transition:.15s;width:100%}
+.btn-blue{background:#4d9fff;color:#000}.btn-blue:hover{background:#7eb8ff}
+.btn-green{background:#00e5a0;color:#000}.btn-green:hover{background:#00ffb3}
+.btn-yellow{background:#ffb830;color:#000}.btn-yellow:hover{background:#ffd166}
+.btn-run{background:#7eb8ff;color:#000;font-size:15px;padding:12px}
+
+.stat-row{display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap}
+.stat-box{background:#0a0c10;border:1px solid #252d3d;padding:12px 14px;border-radius:3px;flex:1;min-width:160px}
+.stat-box .n{font-size:22px;font-weight:700;font-family:‘IBM Plex Mono’,monospace;color:#f8faff}
+.stat-box .s{font-size:11px;color:#6b7a99;margin-top:2px}
+
+.upload-label{display:block;background:#1a2030;border:2px dashed #3a4560;padding:14px;text-align:center;cursor:pointer;color:#7eb8ff;font-weight:700;border-radius:3px;margin-bottom:8px}
+.upload-label:hover{border-color:#7eb8ff}
+input[type=file]{display:none}
+
+#fetchLog{font-size:12px;color:#6b7a99;font-family:‘IBM Plex Mono’,monospace;margin-top:8px;min-height:18px;word-break:break-all}
+
+.cfg-panel{background:#1a2030;border:1px solid #3a4560;padding:14px;margin-bottom:14px;display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:14px}
+.cfg-box{background:#12161f;border:1px solid #252d3d;padding:12px;display:flex;flex-direction:column;gap:8px}
+.cfg-label{font-size:11px;font-weight:700;text-transform:uppercase;border-bottom:1px solid #252d3d;padding-bottom:6px;margin-bottom:2px}
+.cfg-row{display:flex;justify-content:space-between;align-items:center;font-size:13px}
+.cfg-row input,.cfg-row select{width:70px;text-align:right}
+.cfg-row.wide input{width:100px}
+.cfg-divider{height:1px;background:#252d3d;margin:4px 0}
+
+.toggles{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:4px}
+.toggles label{display:flex;align-items:center;gap:6px;cursor:pointer;font-size:13px}
+
+/* ── 結果頁 ── */
+.metrics-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:16px}
+.metric-card{background:#12161f;border:1px solid #252d3d;padding:14px}
+.metric-card.m-orig{border-top:3px solid #00e5a0}
+.metric-card.m-a{border-top:3px solid #7eb8ff}
+.metric-card.m-b{border-top:3px solid #ffb830}
+.metric-card.m-c{border-top:3px solid #c084fc}
+.metric-card.m-bh{border-top:3px solid #3d4a66}
+.m-title{font-size:12px;color:#6b7a99;font-weight:700;margin-bottom:8px;text-transform:uppercase}
+.m-mode-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;padding:2px 7px;border-radius:2px;margin-bottom:5px;display:inline-block}
+.m-mode-compound{background:#00e5a015;color:#00e5a0;border:1px solid #00e5a030}
+.m-mode-linear{background:#ffb83015;color:#ffb830;border:1px solid #ffb83030}
+.m-row{display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;border-bottom:1px dashed #1a2030;padding-bottom:2px}
+.m-row:last-child{border-bottom:none}
+.m-val{font-family:‘IBM Plex Mono’,monospace;font-weight:700}
+.m-divider{height:1px;background:#252d3d;margin:7px 0}
+
+/* ── 槓桿快速切換 ── */
+.lev-block{background:#12161f;border:1px solid #3a4560;padding:14px;margin-bottom:14px}
+.lev-title{font-size:12px;font-weight:700;color:#e2eaf8;margin-bottom:12px;display:flex;align-items:center;gap:10px}
+.lev-hint{font-size:11px;color:#3a4560;font-weight:400}
+.lev-presets{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.lev-btn{flex:1;min-width:70px;padding:10px 8px;background:#0a0c10;border:2px solid #252d3d;
+border-radius:3px;cursor:pointer;text-align:center;transition:.15s;font-family:inherit}
+.lev-btn:hover{border-color:#7eb8ff;background:#1a2030}
+.lev-btn.active{border-color:#00e5a0;background:#00e5a010}
+.lev-val{display:block;font-size:20px;font-weight:900;font-family:‘IBM Plex Mono’,monospace;
+color:#f8faff;line-height:1.2}
+.lev-btn.active .lev-val{color:#00e5a0}
+.lev-desc{display:block;font-size:10px;color:#6b7a99;margin-top:3px;line-height:1.4}
+.lev-btn.active .lev-desc{color:#00e5a060}
+.lev-custom-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
+.chart-mode-bar{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+.chart-mode-btn{padding:5px 14px;font-size:11px;font-weight:700;border:1px solid #3a4560;background:transparent;color:#6b7a99;border-radius:2px;cursor:pointer;font-family:inherit;transition:.15s}
+.chart-mode-btn.active{background:#1a2030;color:#e2eaf8;border-color:#7eb8ff}
+.chart-mode-hint{font-size:11px;color:#3a4560;font-family:‘IBM Plex Mono’,monospace}
+
+/* ── 目前狀態 ── */
+.status-block{background:#12161f;border:1px solid #3a4560;margin-bottom:14px;overflow:hidden}
+.status-block-header{background:#1a2030;padding:10px 14px;font-size:12px;font-weight:700;text-transform:uppercase;color:#6b7a99;letter-spacing:.06em;border-bottom:1px solid #252d3d;display:flex;align-items:center;gap:8px}
+.status-block-header span{color:#7eb8ff}
+.status-days{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid #252d3d}
+.status-day{padding:14px 16px;position:relative}
+.status-day:first-child{border-right:1px solid #252d3d}
+.day-label{font-size:10px;font-weight:700;text-transform:uppercase;color:#6b7a99;letter-spacing:.08em;margin-bottom:8px}
+.day-date{font-size:11px;color:#3a4560;font-family:‘IBM Plex Mono’,monospace;margin-bottom:10px}
+.score-row{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:8px}
+.score-item{display:flex;flex-direction:column}
+.score-big{font-size:30px;font-weight:900;font-family:‘IBM Plex Mono’,monospace;line-height:1}
+.score-sublabel{font-size:9px;color:#6b7a99;margin-top:2px;font-weight:700;letter-spacing:.06em}
+.day-pills{display:flex;gap:6px;flex-wrap:wrap}
+.pill{padding:3px 9px;border-radius:2px;font-size:11px;font-weight:700;font-family:‘IBM Plex Mono’,monospace}
+.pill-on{background:#00e5a020;color:#00e5a0;border:1px solid #00e5a040}
+.pill-mid{background:#ffb83020;color:#ffb830;border:1px solid #ffb83040}
+.pill-off{background:#ff4d6d20;color:#ff4d6d;border:1px solid #ff4d6d40}
+.pill-pos{background:#7eb8ff20;color:#7eb8ff;border:1px solid #7eb8ff40}
+.pill-strk{background:#c084fc20;color:#c084fc;border:1px solid #c084fc40}
+.delta-badge{position:absolute;top:12px;right:12px;font-size:11px;font-family:‘IBM Plex Mono’,monospace;font-weight:700}
+
+/* ── 狀態機 ── */
+.state-row{display:flex;align-items:center;padding:10px 16px;border-bottom:1px solid #1a2030}
+.state-row:last-child{border-bottom:none}
+.state-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-right:10px}
+.state-info{flex:1;font-size:13px}
+.state-name{font-weight:700}
+.state-desc{font-size:11px;color:#6b7a99;margin-top:1px}
+.state-pos{font-family:‘IBM Plex Mono’,monospace;font-size:14px;font-weight:700}
+
+/* ── 交易歷程 ── */
+.chart-wrap{background:#12161f;border:1px solid #252d3d;padding:16px;margin-bottom:14px}
+.trades-block{background:#12161f;border:1px solid #252d3d;margin-bottom:14px}
+.trades-header{background:#1a2030;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #252d3d;flex-wrap:wrap;gap:8px}
+.trades-title{font-size:12px;font-weight:700;text-transform:uppercase;color:#6b7a99;letter-spacing:.06em}
+.trades-count{font-size:11px;font-family:‘IBM Plex Mono’,monospace;color:#3a4560}
+/* 方法選擇子頁籤 */
+.method-tabs{display:flex;gap:0;border-bottom:1px solid #252d3d;background:#0f1318}
+.method-tab{padding:7px 16px;font-size:12px;font-weight:700;cursor:pointer;color:#6b7a99;border:none;border-bottom:2px solid transparent;background:none;font-family:inherit;transition:.15s}
+.method-tab.active-orig{color:#00e5a0;border-bottom-color:#00e5a0}
+.method-tab.active-a{color:#7eb8ff;border-bottom-color:#7eb8ff}
+.method-tab.active-b{color:#ffb830;border-bottom-color:#ffb830}
+.method-tab.active-c{color:#c084fc;border-bottom-color:#c084fc}
+.trade-table{width:100%;border-collapse:collapse}
+.trade-table th{font-size:10px;font-weight:700;text-transform:uppercase;color:#3a4560;letter-spacing:.06em;padding:8px 12px;text-align:left;border-bottom:1px solid #1a2030;background:#0f1318}
+.trade-table td{padding:8px 12px;font-size:12px;border-bottom:1px solid #1a2030;font-family:‘IBM Plex Mono’,monospace;vertical-align:middle}
+.trade-table tr:last-child td{border-bottom:none}
+.trade-table tr:hover td{background:#1a2030}
+.tag-buy{color:#00e5a0;font-weight:700}.tag-sell{color:#ff4d6d;font-weight:700}
+.tag-reduce{color:#ffb830;font-weight:700}.tag-strk{color:#c084fc;font-weight:700}
+.tag-zero{color:#6b7a99;font-weight:700}
+.arrow{color:#3a4560;margin:0 4px}
+
+/* ── 方法說明橫條 ── */
+.method-legend{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;margin-bottom:14px}
+.method-pill-box{background:#12161f;border:1px solid #252d3d;padding:10px 14px;font-size:12px}
+.method-pill-box .mp-title{font-weight:700;margin-bottom:4px;font-size:12px}
+.method-pill-box .mp-desc{font-size:11px;color:#6b7a99;line-height:1.5}
+
+/* ── Loading ── */
+.loading-overlay{position:fixed;inset:0;background:rgba(10,12,16,.9);display:flex;flex-direction:column;align-items:center;justify-content:center;z-index:999;gap:14px}
+.hidden{display:none}
+.spinner{width:36px;height:36px;border:3px solid #252d3d;border-top-color:#00e5a0;border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#loadingText{font-family:‘IBM Plex Mono’,monospace;font-size:13px;color:#6b7a99}
+
+.tg{color:#00e5a0;font-weight:700}.tr{color:#ff4d6d;font-weight:700}.ty{color:#ffb830;font-weight:700}.tc{color:#7eb8ff;font-weight:700}
+</style>
+
+</head>
 <body>
 
-<h2>🛡️ 矛與盾 V8.4 Full</h2>
-<div class="section">
-  <h3>⚙️ 回測設定</h3>
-
-  <label>Cash Yield：</label>
-  <input type="checkbox" id="useCash" checked>
-
-  <label>利率 (%)：</label>
-  <input type="number" id="cashRate" value="4" step="0.1">
-
-  <br><br>
-
-  <button onclick="runBacktest()">▶ 執行回測</button>
-  <button onclick="exportTrades()">⬇ 交易紀錄 CSV</button>
-  <button onclick="exportNAV()">⬇ NAV CSV</button>
+<div class="loading-overlay hidden" id="loadingOverlay">
+  <div class="spinner"></div>
+  <div id="loadingText">處理中...</div>
 </div>
-<div class="section">
-  <h3>📊 NAV 曲線</h3>
-  <canvas id="navChart" height="120"></canvas>
+
+<h2>🛡️ 矛與盾 V8.3</h2>
+
+<div class="tabs">
+  <button class="tab active" onclick="switchTab(event,'db')">🗄️ 資料庫更新</button>
+  <button class="tab" onclick="switchTab(event,'bt')">⚙ 回測設定</button>
+  <button class="tab" onclick="switchTab(event,'result')">📊 回測結果</button>
 </div>
+
+<!-- ══ 頁面 1：資料庫 ══ -->
+
+<div class="panel active" id="panel-db">
+  <div class="step-block">
+    <div class="step-header">
+      <div><div class="step-title-text">🔑 API 設定</div><div class="step-subtitle">步驟二自動抓取時使用</div></div>
+    </div>
+    <div class="step-body">
+      <div class="grid2">
+        <div class="field span2"><label>FRED API Key</label><input type="text" id="apiFredKey" value="258bf0113f3cc4ec207f3160731c459e" autocorrect="off" spellcheck="false"></div>
+        <div class="field span2"><label>Proxy URL</label><input type="text" id="apiProxy" value="https://shield-proxy.depross0205.workers.dev?url=" autocorrect="off" spellcheck="false"></div>
+      </div>
+    </div>
+  </div>
+  <div class="step-block">
+    <div class="step-header"><span class="step-num s1">1</span>
+      <div><div class="step-title-text">上傳現有歷史資料庫</div><div class="step-subtitle">載入 CSV 作為基礎</div></div>
+    </div>
+    <div class="step-body">
+      <label class="upload-label" for="csvUpload">📂 點擊選擇 CSV 檔案</label>
+      <input type="file" id="csvUpload" accept=".csv" onchange="loadCSV(event)">
+      <div id="csvStatus" style="font-size:12px;color:#00e5a0;margin-bottom:10px;min-height:16px"></div>
+      <div class="stat-row">
+        <div class="stat-box"><div class="n" id="dbCount">0 筆</div><div class="s">記憶體資料庫</div></div>
+        <div class="stat-box"><div class="n" id="dbRange" style="font-size:14px">--</div><div class="s">資料區間</div></div>
+      </div>
+    </div>
+  </div>
+  <div class="step-block">
+    <div class="step-header"><span class="step-num s2">2</span>
+      <div><div class="step-title-text">自動抓取最新數據並補齊</div><div class="step-subtitle">從 FRED & Yahoo Finance 抓取</div></div>
+    </div>
+    <div class="step-body">
+      <div class="field"><label>本月 CAPE（手動查詢後填入）</label><input type="number" id="apiCape" value="36.50" step="0.1" style="width:140px"></div>
+      <button class="btn-blue" onclick="fetchAndMerge()">🔄 自動抓取並整併</button>
+      <div id="fetchLog"></div>
+    </div>
+  </div>
+  <div class="step-block">
+    <div class="step-header"><span class="step-num s3">3</span>
+      <div><div class="step-title-text">手動輸入今日最新數據</div><div class="step-subtitle">CAPE 留空自動沿用上一日</div></div>
+    </div>
+    <div class="step-body">
+      <div class="grid2">
+        <div class="field"><label>日期</label><input type="date" id="dbDate"></div>
+        <div class="field"><label>S&P 500</label><input type="number" id="dbSP" step="0.01"></div>
+        <div class="field"><label>VIX</label><input type="number" id="dbVIX" step="0.01"></div>
+        <div class="field"><label>HY 利差（原始值）</label><input type="number" id="dbHY" step="0.001"></div>
+        <div class="field"><label>TIPS 10Y (%)</label><input type="number" id="dbTIPS" step="0.01"></div>
+        <div class="field"><label>CAPE（可留空）</label><input type="number" id="dbCAPE" step="0.01" placeholder="沿用上日"></div>
+        <div class="field"><label>DGS10 (%)</label><input type="number" id="dbY10" step="0.01"></div>
+        <div class="field"><label>DGS2 (%)</label><input type="number" id="dbY2" step="0.01"></div>
+      </div>
+      <button class="btn-yellow" onclick="manualAdd()">💾 寫入記憶體資料庫</button>
+    </div>
+  </div>
+  <div class="step-block">
+    <div class="step-header"><span class="step-num s4">4</span>
+      <div><div class="step-title-text">匯出完整最新資料庫</div><div class="step-subtitle">下載含所有欄位的完整 CSV</div></div>
+    </div>
+    <div class="step-body"><button class="btn-green" onclick="exportCSV()">⬇ 下載 Shield_Database.csv</button></div>
+  </div>
+</div>
+
+<!-- ══ 頁面 2：回測設定 ══ -->
+
+<div class="panel" id="panel-bt">
+
+  <!-- 槓桿快速切換 -->
+
+  <div class="lev-block">
+    <div class="lev-title">⚡ 加碼倍數（最高倉位）<span class="lev-hint">影響複利效果最大的單一變數</span></div>
+    <div class="lev-presets" id="levPresets">
+      <button class="lev-btn" onclick="setLev(1.0,this)">
+        <span class="lev-val">1.0×</span>
+        <span class="lev-desc">無槓桿<br>最真實</span>
+      </button>
+      <button class="lev-btn" onclick="setLev(1.2,this)">
+        <span class="lev-val">1.2×</span>
+        <span class="lev-desc">輕度加碼<br>保守</span>
+      </button>
+      <button class="lev-btn active" onclick="setLev(1.5,this)">
+        <span class="lev-val">1.5×</span>
+        <span class="lev-desc">原始設定<br>標準</span>
+      </button>
+      <button class="lev-btn" onclick="setLev(2.0,this)">
+        <span class="lev-val">2.0×</span>
+        <span class="lev-desc">高槓桿<br>僅供參考</span>
+      </button>
+    </div>
+    <div class="lev-custom-row">
+      <span style="font-size:12px;color:#6b7a99">自訂：</span>
+      <input type="number" id="levCustom" value="1.5" step="0.1" min="0.5" max="3.0"
+        style="width:70px;text-align:center;font-size:14px;font-weight:700;font-family:'IBM Plex Mono',monospace"
+        oninput="setLevCustom(this.value)">
+      <span style="font-size:12px;color:#6b7a99">× &nbsp;（同步更新「倉位 ON」）</span>
+    </div>
+  </div>
+
+  <div class="cfg-panel">
+
+```
+<!-- 基本設定 -->
+<div class="cfg-box">
+  <div class="cfg-label" style="color:#ffb830">模組開關 / 區間</div>
+  <div class="toggles">
+    <label><input type="checkbox" id="useRegime" checked> Regime</label>
+    <label><input type="checkbox" id="useV8" checked> V8 倉位</label>
+    <label><input type="checkbox" id="useYC" checked> YC 因子</label>
+  </div>
+  <div class="cfg-divider"></div>
+  <div class="cfg-row wide"><span>開始</span><input type="date" id="cpStart" value="2003-01-01"></div>
+  <div class="cfg-row wide"><span>結束</span><input type="date" id="cpEnd" value="2026-12-31"></div>
+</div>
+
+<!-- Regime -->
+<div class="cfg-box">
+  <div class="cfg-label" style="color:#00e5a0">Regime 門檻</div>
+  <div class="cfg-row"><span>RSI 牛 (>)</span><input type="number" id="regRsiOn" value="60"></div>
+  <div class="cfg-row"><span>RSI 熊 (&lt;)</span><input type="number" id="regRsiOff" value="40"></div>
+  <div class="cfg-row"><span>VIX 牛 (&lt;)</span><input type="number" id="regVixOn" value="20"></div>
+  <div class="cfg-row"><span>VIX 熊 (>)</span><input type="number" id="regVixOff" value="25"></div>
+</div>
+
+<!-- 倉位 -->
+<div class="cfg-box">
+  <div class="cfg-label" style="color:#7eb8ff">盾牌 / 倉位門檻</div>
+  <div class="cfg-row"><span>加碼門檻 (>)</span><input type="number" id="shieldHi" value="60"></div>
+  <div class="cfg-row"><span>減碼門檻 (&lt;)</span><input type="number" id="shieldLo" value="40"></div>
+  <div class="cfg-row"><span>倉位 ON</span><input type="number" id="posOn" value="1.5" step="0.1"></div>
+  <div class="cfg-row"><span>倉位 MID</span><input type="number" id="posMid" value="1.0" step="0.1"></div>
+  <div class="cfg-row"><span>倉位 短打</span><input type="number" id="posStrk" value="0.3" step="0.1"></div>
+  <div class="cfg-row"><span>VIX 短打 (>)</span><input type="number" id="strkVix" value="30"></div>
+</div>
+
+<!-- 方法 A -->
+<div class="cfg-box">
+  <div class="cfg-label" style="color:#7eb8ff">方法 A｜HY Delta 動態界</div>
+  <div style="font-size:11px;color:#6b7a99;margin-bottom:4px">F5 以當日 HY 日變化量（bp）做 lerp</div>
+  <div class="cfg-row"><span>Delta 下界 (bp)</span><input type="number" id="aDeltaLo" value="-20"></div>
+  <div class="cfg-row"><span>Delta 上界 (bp)</span><input type="number" id="aDeltaHi" value="50"></div>
+  <div style="font-size:11px;color:#3a4560;margin-top:2px">收窄→ F5↑，擴大→ F5↓</div>
+</div>
+
+<!-- 方法 B -->
+<div class="cfg-box">
+  <div class="cfg-label" style="color:#ffb830">方法 B｜滾動百分位界</div>
+  <div style="font-size:11px;color:#6b7a99;margin-bottom:4px">F5 以過去 N 日 HY 的 p5/p95 做動態 lerp</div>
+  <div class="cfg-row"><span>滾動視窗 (日)</span><input type="number" id="bWindow" value="252"></div>
+  <div class="cfg-row"><span>低百分位 (%)</span><input type="number" id="bPctLo" value="5"></div>
+  <div class="cfg-row"><span>高百分位 (%)</span><input type="number" id="bPctHi" value="95"></div>
+</div>
+
+<!-- 方法 C 說明 -->
+<div class="cfg-box">
+  <div class="cfg-label" style="color:#c084fc">方法 C｜OR 複合訊號</div>
+  <div style="font-size:12px;color:#6b7a99;line-height:1.7;margin-top:4px">
+    使用方法 A 與 B 各自計算的完整 Shield Score：<br>
+    <span style="color:#00e5a0">進場</span> → A 或 B 任一 &gt; 加碼門檻<br>
+    <span style="color:#ff4d6d">出場</span> → A 或 B 任一 &lt; 減碼門檻<br>
+    <span style="color:#ffb830">倉位</span> → 進場用較高分，出場用較低分
+  </div>
+</div>
+```
+
+  </div>
+  <button class="btn-run" onclick="runBacktest()">▶ 執行四方法比較回測</button>
+</div>
+
+<!-- ══ 頁面 3：回測結果 ══ -->
+
+<div class="panel" id="panel-result">
+
+  <!-- 方法說明 -->
+
+  <div class="method-legend">
+    <div class="method-pill-box"><div class="mp-title" style="color:#00e5a0">原始策略</div><div class="mp-desc">F5 固定邊界 lerp（250→600bp）</div></div>
+    <div class="method-pill-box"><div class="mp-title" style="color:#7eb8ff">方法 A｜HY Delta</div><div class="mp-desc">F5 用日變化量 delta（bp）做 lerp，+50bp 為危險上界</div></div>
+    <div class="method-pill-box"><div class="mp-title" style="color:#ffb830">方法 B｜滾動百分位</div><div class="mp-desc">F5 用滾動252日 p5/p95 動態調整 lerp 邊界</div></div>
+    <div class="method-pill-box"><div class="mp-title" style="color:#c084fc">方法 C｜OR 複合</div><div class="mp-desc">A 或 B 任一突破門檻才動作，進保守/出積極</div></div>
+  </div>
+
+  <!-- 績效卡 -->
+
+  <div class="metrics-grid" id="metricsGrid"></div>
+
+  <!-- 目前狀態 -->
+
+  <div class="status-block" id="statusBlock" style="display:none">
+    <div class="status-block-header">📡 目前狀態（最新資料） <span id="statusRange"></span></div>
+    <div class="status-days" id="statusDays"></div>
+    <div id="stateRows"></div>
+  </div>
+
+  <!-- 圖表 -->
+
+  <div class="chart-wrap">
+    <div style="font-size:11px;color:#3a4560;font-family:'IBM Plex Mono',monospace;margin-bottom:10px">每日重平衡複利（equity × (1 + pos × 當日漲幅)）</div>
+    <canvas id="navChart" height="300"></canvas>
+  </div>
+
+  <!-- 交易歷程 -->
+
+  <div class="trades-block" id="tradesBlock" style="display:none">
+    <div class="trades-header">
+      <div class="trades-title">📋 買賣歷程</div>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <div class="trades-count" id="tradesCount"></div>
+        <button onclick="exportTrades()" style="width:auto;padding:5px 12px;font-size:11px;background:#252d3d;color:#7eb8ff;border:1px solid #3a4560;border-radius:3px;cursor:pointer;font-weight:700">⬇ 匯出 CSV</button>
+      </div>
+    </div>
+    <div class="method-tabs" id="methodTabs">
+      <button class="method-tab active-orig" onclick="switchTrades('orig',this)">原始策略</button>
+      <button class="method-tab" onclick="switchTrades('a',this)">方法 A</button>
+      <button class="method-tab" onclick="switchTrades('b',this)">方法 B</button>
+      <button class="method-tab" onclick="switchTrades('c',this)">方法 C</button>
+    </div>
+    <div style="overflow-x:auto">
+      <table class="trade-table">
+        <thead>
+          <tr>
+            <th>#</th><th>日期</th><th>S&P 500</th>
+            <th>ShieldA</th><th>ShieldB</th>
+            <th>Regime</th><th>倉位變化</th><th>方向</th>
+            <th>本金現值</th><th>備註</th>
+          </tr>
+        </thead>
+        <tbody id="tradeBody"></tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
 <script>
+'use strict';
 
 let DB = [];
-let BT_RESULT = null;
+let navChart = null;
+// 儲存四份交易歷程供切換
+let allTrades = {orig:[], a:[], b:[], c:[]};
+let currentTradeMethod = 'orig';
+// 儲存曲線供圖表使用
+let curveData = {};
 
-// ===== 模擬資料（可換成你原本 DB）=====
-for(let i=0;i<1500;i++){
-  DB.push({
-    d: "2020-"+String((i%12)+1).padStart(2,'0')+"-"+String((i%28)+1).padStart(2,'0'),
-    sp: 3000 + i*2 + Math.random()*50,
-    vix: 15+Math.random()*10,
-    hy: 3+Math.random(),
-    tips: 1.5,
-    cape: 25+Math.random()*5,
-    y10: 4,
-    y2: 3.5
-  });
-}
-  function runBacktest(){
+const lerp = (x,x0,x1,y0,y1) => y0+(y1-y0)*Math.max(0,Math.min(1,(x-x0)/(x1-x0)));
+const $ = id => document.getElementById(id);
+const setLog = (msg,ok) => {
+  const el=$('fetchLog'); if(!el) return;
+  el.textContent=msg; el.style.color=ok===true?'#00e5a0':ok===false?'#ff4d6d':'#6b7a99';
+};
 
-  const useCash = document.getElementById('useCash').checked;
-  const cashRate = parseFloat(document.getElementById('cashRate').value)/100;
-  const cashDaily = cashRate / 252;
-
-  let eqA=100000, eqB=100000, eqC=100000, eqD=100000, eqBH=100000;
-
-  let pA=1, pB=1, pC=1, pD=1;
-
-  const trades = [];
-
-  for(let i=1;i<DB.length;i++){
-
-    const r = DB[i];
-    const prev = DB[i-1];
-
-    const ret = (r.sp - prev.sp) / prev.sp;
-
-    // ===== 簡化 score（可接你原本）=====
-    const score = 50 + (Math.random()*40-20);
-
-    // ===== Regime =====
-    let regime = "MID";
-    if(r.vix < 18) regime="ON";
-    if(r.vix > 25) regime="OFF";
-
-    // ===== A/B 策略 =====
-    pA = score>60 ? 1.5 : score<40 ? 0 : 1;
-    pB = score>60 ? 1.2 : score<40 ? 0 : 1;
-
-    // ===== C/D =====
-    pC = (pA>0 && pB>0) ? 1 : 0;
-    pD = Math.min(pA,pB);
-
-    // ===== 🔥 V8.4 Cash 核心 =====
-    function calc(eq,p){
-      let total = p * ret;
-      if(useCash){
-        total += (1 - p) * cashDaily;
-      }
-      return eq * (1 + total);
-    }
-
-    eqA = calc(eqA,pA);
-    eqB = calc(eqB,pB);
-    eqC = calc(eqC,pC);
-    eqD = calc(eqD,pD);
-
-    eqBH *= (1 + ret);
-
-    // ===== 🔥 交易紀錄 =====
-    trades.push({
-      date:r.d,
-      price:r.sp,
-      ret:ret,
-      regime:regime,
-
-      A_pos:pA,A_eq:eqA,
-      B_pos:pB,B_eq:eqB,
-      C_pos:pC,C_eq:eqC,
-      D_pos:pD,D_eq:eqD,
-
-      BH:eqBH
+// ════════════════════════════════════════
+// 資料庫工具
+// ════════════════════════════════════════
+function sortAndFill(){
+  DB.sort((a,b)=>a.d.localeCompare(b.d));
+  let last={sp:5000,vix:18,hy:3.5,tips:1.5,cape:30,y10:4.0,y2:3.8};
+  DB.forEach(r=>{
+    ['sp','vix','hy','tips','cape','y10','y2'].forEach(k=>{
+      if(r[k]==null||isNaN(r[k])) r[k]=last[k]; else last[k]=r[k];
     });
-  }
-
-  BT_RESULT = {trades};
-
-  drawChart(trades);
+  });
+  updateStatus();
 }
-  function drawChart(trades){
+function updateStatus(){
+  $('dbCount').textContent=DB.length+' 筆';
+  $('dbRange').textContent=DB.length>0?DB[0].d+' → '+DB[DB.length-1].d:'--';
+  if(DB.length>0){
+    const last=DB[DB.length-1];
+    $('dbDate').value=new Date().toISOString().slice(0,10);
+    $('dbSP').value=last.sp.toFixed(2); $('dbVIX').value=last.vix.toFixed(2);
+    $('dbHY').value=last.hy.toFixed(4); $('dbTIPS').value=last.tips.toFixed(2);
+    $('dbY10').value=last.y10.toFixed(2); $('dbY2').value=last.y2.toFixed(2);
+    $('dbCAPE').value='';
+    $('cpStart').value=DB[0].d; $('cpEnd').value=last.d;
+  }
+}
+window.addEventListener('DOMContentLoaded',()=>{ $('dbDate').value=new Date().toISOString().slice(0,10); });
 
-  const ctx = document.getElementById('navChart');
+function loadCSV(event){
+  const file=event.target.files[0]; if(!file) return;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    try{
+      const lines=e.target.result.split('\n').filter(l=>l.trim());
+      const headers=lines[0].split(',').map(h=>h.trim().toUpperCase());
+      const gi=n=>headers.indexOf(n);
+      const idx={d:gi('DATE'),sp:gi('SP500'),vix:gi('VIX'),hy:gi('HY_SPREAD'),
+        tips:gi('TIPS_10Y'),cape:gi('CAPE'),y10:gi('DGS10'),y2:gi('DGS2')};
+      if(idx.d<0||idx.sp<0){alert('找不到 DATE 或 SP500 欄位！');return;}
+      const rows=[];
+      for(let i=1;i<lines.length;i++){
+        const c=lines[i].split(','); if(c.length<4) continue;
+        const pf=k=>idx[k]>-1?parseFloat(c[idx[k]]):NaN;
+        rows.push({d:c[idx.d].trim(),sp:pf('sp'),vix:pf('vix'),hy:pf('hy'),
+          tips:pf('tips'),cape:pf('cape'),y10:pf('y10'),y2:pf('y2')});
+      }
+      rows.forEach(r=>{
+        const ei=DB.findIndex(x=>x.d===r.d);
+        if(ei>-1){ Object.entries(r).forEach(([k,v])=>{ if(k!=='d'&&!isNaN(v)) DB[ei][k]=v; }); }
+        else { DB.push(r); }
+      });
+      sortAndFill();
+      $('csvStatus').textContent='✅ 已載入 '+rows.length+' 筆（含合併），共 '+DB.length+' 筆';
+    }catch(err){alert('CSV 解析錯誤：'+err.message);}
+  };
+  reader.readAsText(file);
+}
 
-  new Chart(ctx,{
+async function fetchAndMerge(){
+  const key=$('apiFredKey').value.trim();
+  let proxy=$('apiProxy').value.trim();
+  const cape=parseFloat($('apiCape').value)||30;
+  if(!key){alert('請填寫 FRED API Key');return;}
+  if(proxy&&!proxy.includes('url=')){proxy=proxy.endsWith('/')?proxy+'?url=':proxy+'/?url=';$('apiProxy').value=proxy;}
+  const PROXIES=[proxy,'https://corsproxy.io/?','https://api.allorigins.win/raw?url='].filter(Boolean);
+  $('loadingOverlay').classList.remove('hidden'); setLog('準備連線...');
+  const fetchWithFallback=async(url)=>{
+    let lastErr;
+    for(const p of PROXIES){try{const r=await fetch(p+encodeURIComponent(url));if(r.ok)return r;lastErr=new Error('HTTP '+r.status);}catch(e){lastErr=e;}}
+    throw lastErr||new Error('所有 Proxy 均失敗');
+  };
+  const getFred=async id=>{setLog('抓取 FRED: '+id+'...');$('loadingText').textContent='抓取 FRED: '+id;
+    const url='https://api.stlouisfed.org/fred/series/observations?series_id='+id+'&api_key='+key+'&file_type=json';
+    const res=await fetchWithFallback(url);const j=await res.json();
+    if(j.error_message)throw new Error('FRED: '+j.error_message);
+    const d={};j.observations.forEach(o=>{if(o.value!=='.')d[o.date]=parseFloat(o.value);});return d;};
+  const getYf=async ticker=>{setLog('抓取 Yahoo: '+ticker+'...');$('loadingText').textContent='抓取 Yahoo: '+ticker;
+    const url='https://query1.finance.yahoo.com/v8/finance/chart/'+ticker+'?range=2y&interval=1d';
+    const res=await fetchWithFallback(url);const j=await res.json();const d={};
+    const chart=j.chart.result[0];
+    chart.timestamp.forEach((t,i)=>{if(chart.indicators.quote[0].close[i])d[new Date(t*1000).toISOString().slice(0,10)]=chart.indicators.quote[0].close[i];});return d;};
+  try{
+    const spD=await getYf('^GSPC'),vixD=await getYf('^VIX');
+    const hyD=await getFred('BAMLH0A0HYM2'),tipsD=await getFred('DFII10');
+    const y10D=await getFred('DGS10'),y2D=await getFred('DGS2');
+    setLog('整併資料中...');let added=0,updated=0,lHY=3.5,lT=1.5,l10=4.0,l2=3.8;
+    Object.keys(spD).sort().forEach(d=>{
+      if(hyD[d]!==undefined)lHY=hyD[d];if(tipsD[d]!==undefined)lT=tipsD[d];
+      if(y10D[d]!==undefined)l10=y10D[d];if(y2D[d]!==undefined)l2=y2D[d];
+      if(!vixD[d])return;
+      const row={d,sp:+spD[d].toFixed(4),vix:+vixD[d].toFixed(2),hy:+lHY.toFixed(4),tips:+lT.toFixed(2),cape,y10:+l10.toFixed(2),y2:+l2.toFixed(2)};
+      const ei=DB.findIndex(x=>x.d===d);
+      if(ei>-1){DB[ei]=row;updated++;}else{DB.push(row);added++;}
+    });
+    sortAndFill();
+    const msg=`✅ 完成！新增 ${added} 筆，更新 ${updated} 筆。共 ${DB.length} 筆`;
+    setLog(msg,true);alert(msg+'\n\n可前往「回測設定」執行推演。');
+  }catch(err){setLog('❌ 抓取失敗：'+err.message,false);alert('❌ 抓取失敗：'+err.message);}
+  finally{$('loadingOverlay').classList.add('hidden');}
+}
+
+function manualAdd(){
+  const d=$('dbDate').value,sp=parseFloat($('dbSP').value),vix=parseFloat($('dbVIX').value);
+  const hy=parseFloat($('dbHY').value),tips=parseFloat($('dbTIPS').value);
+  const y10=parseFloat($('dbY10').value),y2=parseFloat($('dbY2').value);
+  if(!d||isNaN(sp)||isNaN(vix)||isNaN(hy)||isNaN(tips)){alert('日期、SP500、VIX、HY、TIPS 為必填！');return;}
+  const lastCAPE=DB.length>0?DB[DB.length-1].cape:30;
+  const capeRaw=$('dbCAPE').value;
+  const cape=capeRaw===''||isNaN(parseFloat(capeRaw))?lastCAPE:parseFloat(capeRaw);
+  const row={d,sp,vix,hy,tips,cape,y10:isNaN(y10)?NaN:y10,y2:isNaN(y2)?NaN:y2};
+  const ei=DB.findIndex(x=>x.d===d);
+  if(ei>-1){DB[ei]=row;}else{DB.push(row);}
+  sortAndFill();alert('✅ '+d+' 已'+(ei>-1?'覆蓋':'新增'));
+}
+
+function exportCSV(){
+  if(DB.length===0){alert('記憶體無資料！');return;}
+  const header='Date,SP500,VIX,HY_Spread,TIPS_10Y,CAPE,DGS10,DGS2';
+  const rows=DB.map(r=>[r.d,(r.sp||0).toFixed(4),(r.vix||0).toFixed(2),(r.hy||0).toFixed(4),
+    (r.tips||0).toFixed(2),(r.cape||30).toFixed(2),(r.y10||0).toFixed(2),(r.y2||0).toFixed(2)].join(','));
+  const blob=new Blob([[header,...rows].join('\n')],{type:'text/csv;charset=utf-8;'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='Shield_Database.csv';
+  a.style.display='none';document.body.appendChild(a);a.click();document.body.removeChild(a);
+}
+
+// ════════════════════════════════════════
+// 核心計算函式
+// ════════════════════════════════════════
+function calcRSI(spArr,i,n=14){
+  if(i<n+1) return 50;
+  let g=0,l=0;
+  for(let j=i-n;j<i;j++){const d=spArr[j+1]-spArr[j];if(d>0)g+=d;else l-=d;}
+  return 100-100/(1+g/(l||1e-9));
+}
+
+function getRegime(i,spArr,vixArr,y10Arr,y2Arr,cfg){
+  if(!cfg.use) return 'MID';
+  const R=calcRSI(spArr,i),slope=y10Arr[i]-y2Arr[i],v=vixArr[i];
+  if(R>cfg.rsiOn&&slope>0&&v<cfg.vixOn) return 'ON';
+  if(R<cfg.rsiOff&&slope<0&&v>cfg.vixOff) return 'OFF';
+  return 'MID';
+}
+
+// ── F1（估值，三方法共用） ──
+function calcF1(r){ return lerp((100/r.cape)-r.tips, 0,4, 10,100); }
+
+// ── YC（殖利率曲線，三方法共用） ──
+function calcYC(r){ return lerp(r.y10-r.y2, -1,2, 20,100); }
+
+// ── F5 原始：固定邊界 250→600bp ──
+function calcF5orig(hy){ return lerp(hy*100, 250,600, 80,20); }
+
+// ── F5 方法A：日變化量 delta，下界→上界 bp ──
+function calcF5A(hyNow, hyPrev, cfg){
+  const deltaBP=(hyNow-hyPrev)*100;  // 今日 - 昨日，單位 bp
+  return lerp(deltaBP, cfg.aDeltaLo, cfg.aDeltaHi, 80, 20);
+}
+
+// ── F5 方法B：滾動百分位動態邊界 ──
+function calcF5B(hyArr, i, cfg){
+  const win=Math.min(cfg.bWindow, i);
+  const subset=hyArr.slice(i-win, i+1).map(v=>v*100).sort((a,b)=>a-b);
+  const pct=(p)=>{ const idx=(p/100)*(subset.length-1); const lo=Math.floor(idx),hi=Math.ceil(idx); return subset[lo]+(subset[hi]-subset[lo])*(idx-lo); };
+  const p5=pct(cfg.bPctLo), p95=pct(cfg.bPctHi);
+  return lerp(hyArr[i]*100, p5, p95, 80, 20);
+}
+
+// ── Shield 合成（通用，傳入已算好的 f5） ──
+function composeShield(f1, f5, yc, useYC){
+  return useYC ? f1*.5+f5*.3+yc*.2 : f1*.5+f5*.5;
+}
+
+// ── 倉位決策（純邏輯，不含短打狀態） ──
+function getPos(shield, reg, rsiVal, vixVal, cfg){
+  if(!cfg.useV8){ return shield>cfg.shieldHi?1.5:shield>cfg.shieldLo?1:0; }
+  const max=reg==='ON'?cfg.posOn:reg==='OFF'?0.5:cfg.posMid;
+  if(shield<cfg.shieldLo) return 0;
+  if(reg==='OFF') return Math.min(0.5, shield>cfg.shieldHi?cfg.posOn:1);
+  return shield>cfg.shieldHi?max:1;
+}
+
+// ── 短打狀態機包裝（原始 / A / B 用）──
+// 進場：Regime ≠ ON && RSI < 35 && VIX > strkVix（不限 Shield 高低）
+// 出場：Shield 回升 > shieldLo → 解除短打，交回正常邏輯
+function resolvePos(shield, reg, rsiVal, vixVal, cfg, sk){
+  if(sk.v){
+    // 出場：VIX 回落 OR RSI 回升（恐慌任一解除）
+    if(vixVal < cfg.strkVix || rsiVal > 45){
+      sk.v = false;
+      return getPos(shield, reg, rsiVal, vixVal, cfg);
+    }
+    return cfg.posStrk;
+  }
+  // 進場：Regime ≠ ON && RSI < 35 && VIX > strkVix（不限 Shield 高低）
+  if(reg !== 'ON' && rsiVal < 35 && vixVal > cfg.strkVix){
+    sk.v = true;
+    return cfg.posStrk;
+  }
+  return getPos(shield, reg, rsiVal, vixVal, cfg);
+}
+
+// ── 方法C 純邏輯（不含短打狀態） ──
+function getPosC_normal(shieldA, shieldB, reg, rsiVal, vixVal, cfg){
+  const sellTriggered = shieldA < cfg.shieldLo || shieldB < cfg.shieldLo;
+  const buyTriggered  = shieldA > cfg.shieldHi || shieldB > cfg.shieldHi;
+  if(sellTriggered) return getPos(Math.min(shieldA,shieldB), reg, rsiVal, vixVal, cfg);
+  if(buyTriggered)  return getPos(Math.max(shieldA,shieldB), reg, rsiVal, vixVal, cfg);
+  return getPos((shieldA+shieldB)/2, reg, rsiVal, vixVal, cfg);
+}
+
+// ── 方法C 短打狀態機包裝 ──
+// 出場：A 或 B 任一 Shield > shieldLo（與 C 的 OR 邏輯一致）
+function resolvePosC(shieldA, shieldB, reg, rsiVal, vixVal, cfg, sk){
+  if(sk.v){
+    // 出場：VIX 回落 OR RSI 回升（與原始/A/B 一致）
+    if(vixVal < cfg.strkVix || rsiVal > 45){
+      sk.v = false;
+      return getPosC_normal(shieldA, shieldB, reg, rsiVal, vixVal, cfg);
+    }
+    return cfg.posStrk;
+  }
+  if(reg !== 'ON' && rsiVal < 35 && vixVal > cfg.strkVix){
+    sk.v = true;
+    return cfg.posStrk;
+  }
+  return getPosC_normal(shieldA, shieldB, reg, rsiVal, vixVal, cfg);
+}
+
+function calcStats(curve){
+  if(curve.length<2) return{total:'--',cagr:'--',mdd:'--',sharpe:'--',std:'--'};
+  let peak=curve[0],mdd=0;const rets=[];
+  for(let i=1;i<curve.length;i++){
+    if(curve[i]>peak)peak=curve[i];
+    mdd=Math.min(mdd,(curve[i]-peak)/peak);
+    rets.push((curve[i]-curve[i-1])/curve[i-1]);
+  }
+  const yrs=Math.max(.1,curve.length/252);
+  const total=curve[curve.length-1]/curve[0]-1;
+  const cagr=Math.pow(1+total,1/yrs)-1;
+  const avg=rets.reduce((a,b)=>a+b,0)/rets.length;
+  const std=Math.sqrt(rets.reduce((a,b)=>a+(b-avg)**2,0)/rets.length)*Math.sqrt(252);
+  return{total:(total*100).toFixed(1),cagr:(cagr*100).toFixed(2),
+    mdd:(mdd*100).toFixed(2),sharpe:std===0?'--':((avg*252)/std).toFixed(2),std:(std*100).toFixed(2)};
+}
+
+// ════════════════════════════════════════
+// UI 工具
+// ════════════════════════════════════════
+function scoreColor(s){
+  if(s>=70)return'#00e5a0';if(s>=50)return'#ffb830';return'#ff4d6d';
+}
+function regimePill(r){
+  if(r==='ON') return'<span class="pill pill-on">ON 牛市</span>';
+  if(r==='OFF')return'<span class="pill pill-off">OFF 熊市</span>';
+  return'<span class="pill pill-mid">MID 中性</span>';
+}
+function posPill(p,cfg){
+  if(p===0)return'<span class="pill pill-off">空倉 0×</span>';
+  if(p===cfg.posStrk)return'<span class="pill pill-strk">短打 '+p+'×</span>';
+  if(p>=cfg.posOn)return'<span class="pill pill-on">滿倉 '+p+'×</span>';
+  return'<span class="pill pill-pos">'+p+'× 標準</span>';
+}
+
+function renderStatusPanel(today, yesterday, cfg){
+  const sb=$('statusBlock'); sb.style.display='';
+  $('statusRange').textContent=yesterday.date+' → '+today.date;
+  const delta=today.sOrig-yesterday.sOrig;
+  const deltaStr=(delta>=0?'+':'')+delta.toFixed(1);
+  const deltaColor=delta>=0?'#00e5a0':'#ff4d6d';
+
+  const makeScores=(day)=>`
+    <div class="score-row">
+      <div class="score-item"><div class="score-big" style="color:${scoreColor(day.sOrig)}">${day.sOrig.toFixed(1)}</div><div class="score-sublabel">原始</div></div>
+      <div class="score-item"><div class="score-big" style="color:${scoreColor(day.sA)}">${day.sA.toFixed(1)}</div><div class="score-sublabel">方法A</div></div>
+      <div class="score-item"><div class="score-big" style="color:${scoreColor(day.sB)}">${day.sB.toFixed(1)}</div><div class="score-sublabel">方法B</div></div>
+    </div>`;
+
+  $('statusDays').innerHTML=`
+    <div class="status-day">
+      <div class="day-label">📅 昨日</div>
+      <div class="day-date">${yesterday.date}</div>
+      ${makeScores(yesterday)}
+      <div class="day-pills">${regimePill(yesterday.regime)}${posPill(yesterday.posOrig,cfg)}</div>
+    </div>
+    <div class="status-day">
+      <div class="day-label">📍 今日（最新）</div>
+      <div class="day-date">${today.date}</div>
+      ${makeScores(today)}
+      <div class="day-pills">${regimePill(today.regime)}${posPill(today.posOrig,cfg)}</div>
+      <div class="delta-badge" style="color:${deltaColor}">${deltaStr}</div>
+    </div>`;
+
+  const states=[
+    {color:'#00e5a0',name:'ON 牛市 · 滿倉',desc:'RSI>60、YC>0、VIX<20，持有 '+cfg.posOn+'×',active:today.regime==='ON'&&today.posOrig===cfg.posOn},
+    {color:'#7eb8ff',name:'MID 標準 · 正常倉',desc:'中性環境，盾>40，持有 1.0×',active:today.regime==='MID'&&today.posOrig===1.0},
+    {color:'#c084fc',name:'短打模式',desc:'Regime≠ON 且 RSI<35 且 VIX>'+cfg.strkVix+'；出場：VIX<'+cfg.strkVix+' OR RSI>45，持有 '+cfg.posStrk+'×',active:today.posOrig===cfg.posStrk},
+    {color:'#ffb830',name:'OFF 縮手',desc:'熊市但盾>40，上限 0.5×',active:today.regime==='OFF'&&today.posOrig===0.5},
+    {color:'#ff4d6d',name:'空倉',desc:'盾<40 且不觸發短打，持有 0×',active:today.posOrig===0},
+  ];
+  $('stateRows').innerHTML=states.map(s=>`
+    <div class="state-row" style="${s.active?'background:#1a2030':''}">
+      <div class="state-dot" style="background:${s.color};color:${s.color};${s.active?'box-shadow:0 0 6px '+s.color:''}"></div>
+      <div class="state-info"><div class="state-name" style="color:${s.active?s.color:'#6b7a99'}">${s.name}</div><div class="state-desc">${s.desc}</div></div>
+      <div class="state-pos" style="color:${s.active?s.color:'#3a4560'}">${s.active?'← 目前':''}</div>
+    </div>`).join('');
+}
+
+function tradeTag(from,to){
+  if(from===0&&to>0)return'<span class="tag-buy">進場</span>';
+  if(to===0)return'<span class="tag-sell">出場</span>';
+  if(to>from)return'<span class="tag-buy">加碼</span>';
+  if(to<=0.31)return'<span class="tag-strk">短打</span>';
+  return'<span class="tag-reduce">減碼</span>';
+}
+function renderTradeTable(trades, method){
+  const reversed=[...trades].reverse();
+  $('tradesCount').textContent=trades.length+' 筆換手（'+{orig:'原始策略',a:'方法A',b:'方法B',c:'方法C'}[method]+')';
+  $('tradeBody').innerHTML=reversed.map((t,idx)=>{
+    const n=trades.length-idx;
+    const pFrom=t.from.toFixed(1)+'×', pTo=t.to.toFixed(1)+'×';
+    const toColor=t.to>t.from?'#00e5a0':t.to===0?'#ff4d6d':'#ffb830';
+    const eqColor=t.equity>=100?'#00e5a0':'#ff4d6d';
+    return`<tr>
+      <td style="color:#3a4560">${n}</td>
+      <td style="color:#e2eaf8">${t.date}</td>
+      <td>${(+t.sp).toLocaleString(undefined,{maximumFractionDigits:0})}</td>
+      <td style="color:${scoreColor(t.sA)}">${t.sA.toFixed(1)}</td>
+      <td style="color:${scoreColor(t.sB)}">${t.sB.toFixed(1)}</td>
+      <td>${t.regime==='ON'?'<span style="color:#00e5a0">ON</span>':t.regime==='OFF'?'<span style="color:#ff4d6d">OFF</span>':'<span style="color:#ffb830">MID</span>'}</td>
+      <td>${pFrom}<span class="arrow">→</span><span style="color:${toColor};font-weight:700">${pTo}</span></td>
+      <td>${tradeTag(t.from,t.to)}</td>
+      <td style="color:${eqColor};font-weight:700">${t.equity.toFixed(2)}</td>
+      <td style="color:#6b7a99;font-size:11px">${t.note}</td>
+    </tr>`;
+  }).join('');
+}
+
+function exportTrades(){
+  const trades=allTrades[currentTradeMethod];
+  if(!trades||trades.length===0){alert('目前無換手記錄可匯出');return;}
+  const methodLabel={orig:'原始策略',a:'方法A',b:'方法B',c:'方法C'}[currentTradeMethod];
+  const header='#,日期,SP500,ShieldA,ShieldB,Regime,倉位前,倉位後,方向,本金現值,備註';
+  const dirLabel=t=>t.to>t.from&&t.from===0?'進場':t.to===0?'出場':t.to>t.from?'加碼':t.to<=0.31?'短打':'減碼';
+  const rows=trades.map((t,i)=>[
+    i+1, t.date, t.sp,
+    t.sA.toFixed(1), t.sB.toFixed(1),
+    t.regime,
+    t.from.toFixed(1)+'x', t.to.toFixed(1)+'x',
+    dirLabel(t),
+    t.equity.toFixed(2),
+    '"'+t.note+'"'
+  ].join(','));
+  const blob=new Blob([[header,...rows].join('\n')],{type:'text/csv;charset=utf-8;'});
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='Shield_trades_'+methodLabel+'_'+new Date().toISOString().slice(0,10)+'.csv';
+  a.style.display='none'; document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+
+function switchTrades(method, btn){
+  currentTradeMethod=method;
+  document.querySelectorAll('.method-tab').forEach(t=>{
+    t.className='method-tab';
+  });
+  btn.className='method-tab active-'+method;
+  renderTradeTable(allTrades[method], method);
+}
+
+// ════════════════════════════════════════
+// 主回測引擎
+// ════════════════════════════════════════
+function runBacktest(){
+  if(DB.length<30){alert('資料不足（< 30 筆）');return;}
+  const start=$('cpStart').value, end=$('cpEnd').value;
+  const slice=DB.filter(r=>r.d>=start&&r.d<=end);
+  if(slice.length<20){alert('區間資料不足（< 20 筆）');return;}
+
+  const cfg={
+    useRegime:$('useRegime').checked, useV8:$('useV8').checked, useYC:$('useYC').checked,
+    rsiOn:+$('regRsiOn').value, rsiOff:+$('regRsiOff').value,
+    vixOn:+$('regVixOn').value, vixOff:+$('regVixOff').value,
+    shieldHi:+$('shieldHi').value, shieldLo:+$('shieldLo').value,
+    posOn:+$('posOn').value, posMid:+$('posMid').value,
+    posStrk:+$('posStrk').value, strkVix:+$('strkVix').value,
+    aDeltaLo:+$('aDeltaLo').value, aDeltaHi:+$('aDeltaHi').value,
+    bWindow:+$('bWindow').value, bPctLo:+$('bPctLo').value, bPctHi:+$('bPctHi').value,
+    use:true
+  };
+  cfg.use=cfg.useRegime;
+
+  $('loadingOverlay').classList.remove('hidden');
+  $('loadingText').textContent='四方法回測運算中...';
+
+  setTimeout(()=>{
+    try{
+      const spA=slice.map(r=>r.sp), vixA=slice.map(r=>r.vix);
+      const hyA=slice.map(r=>r.hy);
+      const y10A=slice.map(r=>r.y10), y2A=slice.map(r=>r.y2);
+      const dates=slice.map(r=>r.d);
+      const initSP=spA[0];
+
+      let eq=100,eqA=100,eqB=100,eqC=100,bh=100;
+      const cOrig=[100],cA=[100],cB=[100],cC=[100],cBH=[100],labels=[dates[0]];
+
+      allTrades={orig:[],a:[],b:[],c:[]};
+      let prevOrig=null,prevA=null,prevB=null,prevC=null;
+      // 四個獨立短打狀態 flag（物件包裝以便傳參可寫）
+      const skOrig={v:false}, skA={v:false}, skB={v:false}, skC={v:false};
+      let dayData=[];
+
+      for(let i=1;i<spA.length;i++){
+        const ret=(spA[i]-spA[i-1])/spA[i-1];
+        const f1=calcF1(slice[i]);
+        const yc=calcYC(slice[i]);
+
+        // F5 各版本
+        const f5Orig = calcF5orig(hyA[i]);
+        const f5Av   = calcF5A(hyA[i], hyA[i-1], cfg);
+        const f5Bv   = calcF5B(hyA, i, cfg);
+
+        // Shield Score 各版本
+        const sOrig = composeShield(f1, f5Orig, yc, cfg.useYC);
+        const sAv   = composeShield(f1, f5Av,   yc, cfg.useYC);
+        const sBv   = composeShield(f1, f5Bv,   yc, cfg.useYC);
+
+        const rsiVal=calcRSI(spA,i);
+        const reg=getRegime(i,spA,vixA,y10A,y2A,cfg);
+
+        const posOrig=resolvePos(sOrig, reg, rsiVal, vixA[i], cfg, skOrig);
+        const posAv  =resolvePos(sAv,   reg, rsiVal, vixA[i], cfg, skA);
+        const posBv  =resolvePos(sBv,   reg, rsiVal, vixA[i], cfg, skB);
+        const posCv  =resolvePosC(sAv, sBv, reg, rsiVal, vixA[i], cfg, skC);
+
+        // 記錄換手（含本金現值）
+        const recordTrade=(trades,prev,pos,shield_a,shield_b,equity)=>{
+          if(prev!==null&&pos!==prev){
+            let note='盾A '+shield_a.toFixed(0)+' 盾B '+shield_b.toFixed(0);
+            if(pos===cfg.posStrk) note+=' | 短打 RSI'+rsiVal.toFixed(0)+' VIX'+vixA[i].toFixed(1);
+            trades.push({date:dates[i],sp:spA[i].toFixed(2),sA:shield_a,sB:shield_b,
+              regime:reg,from:prev,to:pos,equity:+equity.toFixed(2),note});
+          }
+        };
+        recordTrade(allTrades.orig, prevOrig, posOrig, sOrig, sOrig, eq);
+        recordTrade(allTrades.a,    prevA,    posAv,   sAv,   sAv,   eqA);
+        recordTrade(allTrades.b,    prevB,    posBv,   sBv,   sBv,   eqB);
+        recordTrade(allTrades.c,    prevC,    posCv,   sAv,   sBv,   eqC);
+
+        prevOrig=posOrig; prevA=posAv; prevB=posBv; prevC=posCv;
+
+        dayData.push({date:dates[i], sOrig, sA:sAv, sB:sBv, regime:reg,
+          posOrig, posA:posAv, posB:posBv, posC:posCv, rsi:rsiVal});
+
+        // 每日複利（每日重平衡）
+        eq*=(1+posOrig*ret); eqA*=(1+posAv*ret);
+        eqB*=(1+posBv*ret); eqC*=(1+posCv*ret);
+        bh=100*(spA[i]/initSP);
+        cOrig.push(eq); cA.push(eqA); cB.push(eqB); cC.push(eqC); cBH.push(bh);
+
+        labels.push(dates[i]);
+      }
+
+      // ── 儲存曲線 ──
+      const step=Math.max(1,Math.floor(labels.length/150));
+      const smpl=(arr)=>arr.filter((_,i)=>i%step===0);
+      const lblS=smpl(labels);
+      curveData={
+        labels:lblS,
+        compound:[smpl(cOrig),smpl(cA),smpl(cB),smpl(cC),smpl(cBH)]
+      };
+
+      // ── 績效卡 ──
+      const statsC=[calcStats(cOrig),calcStats(cA),calcStats(cB),calcStats(cC),calcStats(cBH)];
+      const cards=[
+        {cls:'m-orig',label:'原始策略',color:'#00e5a0'},
+        {cls:'m-a',   label:'方法 A｜HY Delta',color:'#7eb8ff'},
+        {cls:'m-b',   label:'方法 B｜滾動百分位',color:'#ffb830'},
+        {cls:'m-c',   label:'方法 C｜OR 複合',color:'#c084fc'},
+        {cls:'m-bh',  label:'Buy & Hold',color:'#6b7a99'},
+      ];
+      const mRow=(label,val,col)=>`<div class="m-row"><span>${label}</span><span class="m-val" style="${col?'color:'+col:''}">${val}</span></div>`;
+      const fmtPct=(s,v)=>s[v]==='--'?'--':(parseFloat(s[v])>=0?'+':'')+s[v]+'%';
+      $('metricsGrid').innerHTML=cards.map((c,ci)=>{
+        const sc=statsC[ci];
+        const tcC=parseFloat(sc.total)>=0?'#00e5a0':'#ff4d6d';
+        return`<div class="metric-card ${c.cls}">
+          <div class="m-title" style="color:${c.color}">${c.label}</div>
+          ${mRow('區間報酬',fmtPct(sc,'total'),tcC)}
+          ${mRow('CAGR',sc.cagr==='--'?'--':sc.cagr+'%','')}
+          ${mRow('MDD',sc.mdd==='--'?'--':sc.mdd+'%','#ff4d6d')}
+          ${mRow('Sharpe',sc.sharpe,'#00e5a0')}
+          ${mRow('StdDev',sc.std==='--'?'--':sc.std+'%','')}
+        </div>`;
+      }).join('');
+
+      // ── 目前狀態 ──
+      if(dayData.length>=2){
+        renderStatusPanel(dayData[dayData.length-1], dayData[dayData.length-2], cfg);
+      }
+
+      // ── 交易歷程（預設顯示原始） ──
+      $('tradesBlock').style.display='';
+      document.querySelectorAll('.method-tab').forEach((t,i)=>{
+        t.className='method-tab'+(i===0?' active-orig':'');
+      });
+      currentTradeMethod='orig';
+      renderTradeTable(allTrades.orig,'orig');
+
+      // ── 圖表 ──
+      drawChart();
+
+      const tabs=document.querySelectorAll('.tab');
+      switchTab({target:tabs[2]},'result');
+
+    }catch(err){
+      alert('回測失敗：'+err.message); console.error(err);
+    }finally{
+      $('loadingOverlay').classList.add('hidden');
+    }
+  },80);
+}
+
+// ── 圖表繪製 ──
+const CHART_COLORS=[
+  {label:'原始策略',border:'#00e5a0',width:2},
+  {label:'方法 A',  border:'#7eb8ff',width:1.5},
+  {label:'方法 B',  border:'#ffb830',width:1.5},
+  {label:'方法 C',  border:'#c084fc',width:1.5},
+  {label:'B&H',     border:'#3a4560',width:1},
+];
+function drawChart(){
+  if(!curveData.labels) return;
+  const datasets=CHART_COLORS.map((c,i)=>({
+    label:c.label, data:curveData.compound[i],
+    borderColor:c.border, borderWidth:c.width, pointRadius:0, tension:.1
+  }));
+  if(navChart){navChart.destroy();navChart=null;}
+  navChart=new Chart($('navChart').getContext('2d'),{
     type:'line',
-    data:{
-      labels:trades.map(x=>x.date),
-      datasets:[
-        {label:'A',data:trades.map(x=>x.A_eq),borderColor:'yellow'},
-        {label:'B',data:trades.map(x=>x.B_eq),borderColor:'lime'},
-        {label:'C',data:trades.map(x=>x.C_eq),borderColor:'cyan'},
-        {label:'D',data:trades.map(x=>x.D_eq),borderColor:'magenta'},
-        {label:'B&H',data:trades.map(x=>x.BH),borderColor:'gray'}
-      ]
+    data:{labels:curveData.labels, datasets},
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      animation:{duration:200},
+      plugins:{legend:{labels:{color:'#6b7a99',boxWidth:10,font:{size:12}}}},
+      scales:{
+        x:{ticks:{color:'#6b7a99',maxTicksLimit:8,font:{size:11}},grid:{color:'#1a2030'}},
+        y:{ticks:{color:'#6b7a99',font:{size:11}},grid:{color:'#1a2030'}}
+      }
     }
   });
 }
-  function exportTrades(){
 
-  if(!BT_RESULT){
-    alert('請先回測');
-    return;
-  }
-
-  const rows = BT_RESULT.trades;
-
-  const header = Object.keys(rows[0]).join(',');
-
-  const csv = rows.map(r=>Object.values(r).join(','));
-
-  downloadCSV(header,csv,'trades_v84.csv');
+// ── 槓桿快速切換 ──
+function setLev(val, btn){
+  $('posOn').value = val.toFixed(1);
+  $('levCustom').value = val.toFixed(1);
+  document.querySelectorAll('.lev-btn').forEach(b => b.classList.remove('active'));
+  if(btn) btn.classList.add('active');
 }
-  function exportNAV(){
 
-  const rows = BT_RESULT.trades.map(r=>({
-    date:r.date,
-    A:r.A_eq,
-    B:r.B_eq,
-    C:r.C_eq,
-    D:r.D_eq,
-    BH:r.BH
-  }));
-
-  const header = Object.keys(rows[0]).join(',');
-  const csv = rows.map(r=>Object.values(r).join(','));
-
-  downloadCSV(header,csv,'nav_v84.csv');ㄞ
-  }
-function downloadCSV(header,rows,name){
-
-  const blob = new Blob(
-    [[header,...rows].join('\n')],
-    {type:'text/csv'}
-  );
-
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = name;
-  a.click();
+function setLevCustom(val){
+  const v = parseFloat(val);
+  if(isNaN(v) || v <= 0) return;
+  $('posOn').value = v.toFixed(1);
+  // 取消所有 preset 高亮，除非完全吻合
+  const presets = [1.0, 1.2, 1.5, 2.0];
+  document.querySelectorAll('.lev-btn').forEach((b, i) => {
+    b.classList.toggle('active', Math.abs(presets[i] - v) < 0.001);
+  });
 }
-  </script>
+
+// ── Tab 切換 ──
+function switchTab(e,name){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  if(e.target&&e.target.classList) e.target.classList.add('active');
+  const p=document.getElementById('panel-'+name); if(p) p.classList.add('active');
+}
+</script>
+
 </body>
 </html>
