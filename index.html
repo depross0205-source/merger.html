@@ -55,7 +55,7 @@ button{padding:10px 16px;border:none;border-radius:3px;cursor:pointer;font-size:
 .upload-label{display:block;background:var(--surface2);border:2px dashed var(--border-hi);padding:12px;text-align:center;cursor:pointer;color:var(--accent);font-weight:700;border-radius:3px;margin-bottom:8px}
 .upload-label:hover{border-color:var(--accent)}
 /* input 藏在 label 內部，不需要 display:none；iOS Safari 用包裹寫法觸發 */
-input[type=file]{position:absolute;opacity:0;width:0;height:0;overflow:hidden}
+input[type=file]{display:none}
 #fetchLog{font-size:12px;color:var(--muted);font-family:'IBM Plex Mono',monospace;margin-top:8px;min-height:16px;word-break:break-all}
 /* ── cfg ── */
 .cfg-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-bottom:16px}
@@ -187,13 +187,8 @@ td{padding:9px;border-bottom:1px solid var(--border)}
       <div><div class="step-title">上傳現有歷史資料庫</div><div class="step-sub">載入 CSV 作為基礎，後續補齊</div></div>
     </div>
     <div class="step-body">
-      <!-- label 直接包住 input：iOS Safari 最可靠的觸發方式，不依賴 for/id 綁定 -->
-      <label class="upload-label">
-        📂 點擊選擇 CSV 檔案
-        <input type="file" id="csvUpload"
-          accept=".csv,text/csv,text/plain,application/csv,application/vnd.ms-excel"
-          onchange="loadCSV(event)">
-      </label>
+      <label class="upload-label" for="csvUpload">📂 點擊選擇 CSV 檔案</label>
+      <input type="file" id="csvUpload" accept=".csv" onchange="loadCSV(event)">
       <div id="csvStatus" style="font-size:12px;color:var(--green);min-height:16px;margin-bottom:10px"></div>
       <div class="stat-row">
         <div class="stat-box"><div class="n" id="dbCount">0 筆</div><div class="s">記憶體資料庫</div></div>
@@ -531,17 +526,11 @@ function updateStatus(preserveDate){
 // ════════════════════════════════════════
 function loadCSV(event){
   const file=event.target.files[0]; if(!file) return;
-  // 重置 input，讓同一個檔案可以重複上傳
-  event.target.value='';
   const reader=new FileReader();
   reader.onload=e=>{
     try{
-      // 處理 Windows(\r\n)、Unix(\n)、舊 Mac(\r) 三種換行
-      const raw=e.target.result.replace(/\r\n/g,'\n').replace(/\r/g,'\n');
-      const lines=raw.split('\n').filter(l=>l.trim());
-      // 欄位名稱：去除 BOM(\uFEFF)、空白、\r
-      const headers=lines[0].replace(/^\uFEFF/,'').split(',')
-        .map(h=>h.trim().replace(/\r/g,'').toUpperCase());
+      const lines=e.target.result.split('\n').filter(l=>l.trim());
+      const headers=lines[0].split(',').map(h=>h.trim().toUpperCase());
       const gi=n=>headers.indexOf(n);
       const idx={
         d:gi('DATE'), sp:gi('SP500'),
@@ -550,23 +539,16 @@ function loadCSV(event){
         vix:gi('VIX'), cape:gi('CAPE'),
         y10:gi('DGS10'), y2:gi('DGS2')
       };
-      if(idx.d<0||idx.sp<0){
-        alert('找不到 DATE 或 SP500 欄位！\n\n偵測到欄位：'+headers.join(', '));
-        return;
-      }
+      if(idx.d<0||idx.sp<0){alert('找不到 DATE 或 SP500 欄位！');return;}
       const rows=[];
       for(let i=1;i<lines.length;i++){
         const c=lines[i].split(','); if(c.length<4) continue;
-        // 每格去除前後空白與殘留 \r
-        const cell=k=>idx[k]>-1?(c[idx[k]]||'').trim().replace(/\r/g,''):'';
-        const pf=k=>{const v=parseFloat(cell(k)); return v;};
-        const dateStr=cell('d'); if(!dateStr) continue;
-        rows.push({d:dateStr,
+        const pf=k=>idx[k]>-1?parseFloat(c[idx[k]]):NaN;
+        rows.push({d:c[idx.d].trim(),
           sp:pf('sp'), ew:idx.ew>-1?pf('ew'):pf('sp'),
           hy:pf('hy'), tips:pf('tips'), vix:pf('vix'), cape:pf('cape'),
           y10:pf('y10'), y2:pf('y2')});
       }
-      if(rows.length===0){alert('解析到 0 筆資料，請確認檔案格式。');return;}
       rows.forEach(r=>{
         const ei=DB.findIndex(x=>x.d===r.d);
         if(ei>-1){Object.entries(r).forEach(([k,v])=>{if(k!=='d'&&!isNaN(v)) DB[ei][k]=v;});}
@@ -576,11 +558,9 @@ function loadCSV(event){
       $('csvStatus').textContent='✅ 載入 '+rows.length+' 筆，共 '+DB.length+' 筆';
       const b=$('dataSourceBadge');
       b.textContent='● 真實 CSV ('+DB.length+' 筆)'; b.style.color='var(--green)';
-    }catch(err){alert('CSV 解析錯誤：'+err.message+'\n\n請確認檔案為純文字 CSV 格式。');}
+    }catch(err){alert('CSV 解析錯誤：'+err.message);}
   };
-  reader.onerror=()=>alert('檔案讀取失敗，請重試。');
-  // 指定 UTF-8 編碼讀取
-  reader.readAsText(file,'UTF-8');
+  reader.readAsText(file);
 }
 
 // ════════════════════════════════════════
