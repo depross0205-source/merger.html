@@ -543,31 +543,60 @@ function composeShield(f1, f5, yc, useYC){
   return useYC ? f1*.5+f5*.3+yc*.2 : f1*.5+f5*.5;
 }
 
-// ── 倉位決策 ──
+// ── 倉位決策（純邏輯，不含短打狀態） ──
 function getPos(shield, reg, rsiVal, vixVal, cfg){
   if(!cfg.useV8){ return shield>cfg.shieldHi?1.5:shield>cfg.shieldLo?1:0; }
   const max=reg==='ON'?cfg.posOn:reg==='OFF'?0.5:cfg.posMid;
-  // 短打：Shield < 低門檻 且 RSI < 35 且 VIX > strkVix
-  if(shield<cfg.shieldLo && rsiVal<35 && vixVal>cfg.strkVix) return cfg.posStrk;
   if(shield<cfg.shieldLo) return 0;
   if(reg==='OFF') return Math.min(0.5, shield>cfg.shieldHi?cfg.posOn:1);
   return shield>cfg.shieldHi?max:1;
 }
 
-// ── 方法C 倉位：OR 邏輯 ──
-// 進場：任一 > shieldHi → 用較高分決定倉位
-// 出場：任一 < shieldLo → 用較低分決定倉位（保守）
-function getPosC(shieldA, shieldB, reg, rsiVal, vixVal, cfg){
+// ── 短打狀態機包裝（原始 / A / B 用）──
+// 進場：Regime ≠ ON && RSI < 35 && VIX > strkVix（不限 Shield 高低）
+// 出場：Shield 回升 > shieldLo → 解除短打，交回正常邏輯
+function resolvePos(shield, reg, rsiVal, vixVal, cfg, sk){
+  if(sk.v){
+    // 出場：VIX 回落 OR RSI 回升（恐慌任一解除）
+    if(vixVal < cfg.strkVix || rsiVal > 45){
+      sk.v = false;
+      return getPos(shield, reg, rsiVal, vixVal, cfg);
+    }
+    return cfg.posStrk;
+  }
+  // 進場：Regime ≠ ON && RSI < 35 && VIX > strkVix（不限 Shield 高低）
+  if(reg !== 'ON' && rsiVal < 35 && vixVal > cfg.strkVix){
+    sk.v = true;
+    return cfg.posStrk;
+  }
+  return getPos(shield, reg, rsiVal, vixVal, cfg);
+}
+
+// ── 方法C 純邏輯（不含短打狀態） ──
+function getPosC_normal(shieldA, shieldB, reg, rsiVal, vixVal, cfg){
   const sellTriggered = shieldA < cfg.shieldLo || shieldB < cfg.shieldLo;
   const buyTriggered  = shieldA > cfg.shieldHi || shieldB > cfg.shieldHi;
-  if(sellTriggered){
-    return getPos(Math.min(shieldA,shieldB), reg, rsiVal, vixVal, cfg);
-  }
-  if(buyTriggered){
-    return getPos(Math.max(shieldA,shieldB), reg, rsiVal, vixVal, cfg);
-  }
-  // 中間：用平均
+  if(sellTriggered) return getPos(Math.min(shieldA,shieldB), reg, rsiVal, vixVal, cfg);
+  if(buyTriggered)  return getPos(Math.max(shieldA,shieldB), reg, rsiVal, vixVal, cfg);
   return getPos((shieldA+shieldB)/2, reg, rsiVal, vixVal, cfg);
+}
+
+// ── 方法C 短打狀態機包裝 ──
+// 出場：A 或 B 任一 Shield > shieldLo（與 C 的 OR 邏輯一致）
+function resolvePosC(shieldA, shieldB, reg, rsiVal, vixVal, cfg, sk){
+  if(sk.v){
+    // 出場：VIX 回落 OR RSI 回升（與原始/A/B 一致）
+    if(vixVal < cfg.strkVix || rsiVal > 45){
+      sk.v = false;
+      return getPosC_normal(shieldA, shieldB, reg, rsiVal, vixVal, cfg);
+    }
+    return cfg.posStrk;
+  }
+  if(reg !== 'ON' && rsiVal < 35 && vixVal > cfg.strkVix){
+    sk.v = true;
+    return cfg.posStrk;
+  }
+  return getPosC_normal(shieldA, shieldB, reg, rsiVal, vixVal, cfg);
 }
 
 function calcStats(curve){
@@ -637,7 +666,7 @@ function renderStatusPanel(today, yesterday, cfg){
   const states=[
     {color:'#00e5a0',name:'ON 牛市 · 滿倉',desc:'RSI>60、YC>0、VIX<20，持有 '+cfg.posOn+'×',active:today.regime==='ON'&&today.posOrig===cfg.posOn},
     {color:'#7eb8ff',name:'MID 標準 · 正常倉',desc:'中性環境，盾>40，持有 1.0×',active:today.regime==='MID'&&today.posOrig===1.0},
-    {color:'#c084fc',name:'短打模式',desc:'盾<'+cfg.shieldLo+' 且 RSI<35 且 VIX>'+cfg.strkVix+'，持有 '+cfg.posStrk+'×',active:today.posOrig===cfg.posStrk},
+    {color:'#c084fc',name:'短打模式',desc:'Regime≠ON 且 RSI<35 且 VIX>'+cfg.strkVix+'；出場：VIX<'+cfg.strkVix+' OR RSI>45，持有 '+cfg.posStrk+'×',active:today.posOrig===cfg.posStrk},
     {color:'#ffb830',name:'OFF 縮手',desc:'熊市但盾>40，上限 0.5×',active:today.regime==='OFF'&&today.posOrig===0.5},
     {color:'#ff4d6d',name:'空倉',desc:'盾<40 且不觸發短打，持有 0×',active:today.posOrig===0},
   ];
@@ -726,6 +755,8 @@ function runBacktest(){
 
       allTrades={orig:[],a:[],b:[],c:[]};
       let prevOrig=null,prevA=null,prevB=null,prevC=null;
+      // 四個獨立短打狀態 flag（物件包裝以便傳參可寫）
+      const skOrig={v:false}, skA={v:false}, skB={v:false}, skC={v:false};
       let dayData=[];
 
       for(let i=1;i<spA.length;i++){
@@ -746,10 +777,10 @@ function runBacktest(){
         const rsiVal=calcRSI(spA,i);
         const reg=getRegime(i,spA,vixA,y10A,y2A,cfg);
 
-        const posOrig=getPos(sOrig, reg, rsiVal, vixA[i], cfg);
-        const posAv  =getPos(sAv,   reg, rsiVal, vixA[i], cfg);
-        const posBv  =getPos(sBv,   reg, rsiVal, vixA[i], cfg);
-        const posCv  =getPosC(sAv, sBv, reg, rsiVal, vixA[i], cfg);
+        const posOrig=resolvePos(sOrig, reg, rsiVal, vixA[i], cfg, skOrig);
+        const posAv  =resolvePos(sAv,   reg, rsiVal, vixA[i], cfg, skA);
+        const posBv  =resolvePos(sBv,   reg, rsiVal, vixA[i], cfg, skB);
+        const posCv  =resolvePosC(sAv, sBv, reg, rsiVal, vixA[i], cfg, skC);
 
         // 記錄換手（原始策略）
         const recordTrade=(trades,prev,pos,shield_a,shield_b)=>{
