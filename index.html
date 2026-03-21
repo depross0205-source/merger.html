@@ -78,7 +78,22 @@ input[type=file]{display:none}
 .m-val{font-family:‘IBM Plex Mono’,monospace;font-weight:700}
 .m-divider{height:1px;background:#252d3d;margin:7px 0}
 
-/* ── 圖表模式切換 ── */
+/* ── 槓桿快速切換 ── */
+.lev-block{background:#12161f;border:1px solid #3a4560;padding:14px;margin-bottom:14px}
+.lev-title{font-size:12px;font-weight:700;color:#e2eaf8;margin-bottom:12px;display:flex;align-items:center;gap:10px}
+.lev-hint{font-size:11px;color:#3a4560;font-weight:400}
+.lev-presets{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
+.lev-btn{flex:1;min-width:70px;padding:10px 8px;background:#0a0c10;border:2px solid #252d3d;
+border-radius:3px;cursor:pointer;text-align:center;transition:.15s;font-family:inherit}
+.lev-btn:hover{border-color:#7eb8ff;background:#1a2030}
+.lev-btn.active{border-color:#00e5a0;background:#00e5a010}
+.lev-val{display:block;font-size:20px;font-weight:900;font-family:‘IBM Plex Mono’,monospace;
+color:#f8faff;line-height:1.2}
+.lev-btn.active .lev-val{color:#00e5a0}
+.lev-desc{display:block;font-size:10px;color:#6b7a99;margin-top:3px;line-height:1.4}
+.lev-btn.active .lev-desc{color:#00e5a060}
+.lev-custom-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+
 .chart-mode-bar{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
 .chart-mode-btn{padding:5px 14px;font-size:11px;font-weight:700;border:1px solid #3a4560;background:transparent;color:#6b7a99;border-radius:2px;cursor:pointer;font-family:inherit;transition:.15s}
 .chart-mode-btn.active{background:#1a2030;color:#e2eaf8;border-color:#7eb8ff}
@@ -237,6 +252,38 @@ input[type=file]{display:none}
 <!-- ══ 頁面 2：回測設定 ══ -->
 
 <div class="panel" id="panel-bt">
+
+  <!-- 槓桿快速切換 -->
+
+  <div class="lev-block">
+    <div class="lev-title">⚡ 加碼倍數（最高倉位）<span class="lev-hint">影響複利效果最大的單一變數</span></div>
+    <div class="lev-presets" id="levPresets">
+      <button class="lev-btn" onclick="setLev(1.0,this)">
+        <span class="lev-val">1.0×</span>
+        <span class="lev-desc">無槓桿<br>最真實</span>
+      </button>
+      <button class="lev-btn" onclick="setLev(1.2,this)">
+        <span class="lev-val">1.2×</span>
+        <span class="lev-desc">輕度加碼<br>保守</span>
+      </button>
+      <button class="lev-btn active" onclick="setLev(1.5,this)">
+        <span class="lev-val">1.5×</span>
+        <span class="lev-desc">原始設定<br>標準</span>
+      </button>
+      <button class="lev-btn" onclick="setLev(2.0,this)">
+        <span class="lev-val">2.0×</span>
+        <span class="lev-desc">高槓桿<br>僅供參考</span>
+      </button>
+    </div>
+    <div class="lev-custom-row">
+      <span style="font-size:12px;color:#6b7a99">自訂：</span>
+      <input type="number" id="levCustom" value="1.5" step="0.1" min="0.5" max="3.0"
+        style="width:70px;text-align:center;font-size:14px;font-weight:700;font-family:'IBM Plex Mono',monospace"
+        oninput="setLevCustom(this.value)">
+      <span style="font-size:12px;color:#6b7a99">× &nbsp;（同步更新「倉位 ON」）</span>
+    </div>
+  </div>
+
   <div class="cfg-panel">
 
 ```
@@ -982,6 +1029,25 @@ function setChartMode(mode, btn){
     ? '每日重平衡 × 倉位倍數'
     : '固定單位（100÷起始SP）× 點差累加，純 Alpha 能力';
   drawChart();
+}
+
+// ── 槓桿快速切換 ──
+function setLev(val, btn){
+  $('posOn').value = val.toFixed(1);
+  $('levCustom').value = val.toFixed(1);
+  document.querySelectorAll('.lev-btn').forEach(b => b.classList.remove('active'));
+  if(btn) btn.classList.add('active');
+}
+
+function setLevCustom(val){
+  const v = parseFloat(val);
+  if(isNaN(v) || v <= 0) return;
+  $('posOn').value = v.toFixed(1);
+  // 取消所有 preset 高亮，除非完全吻合
+  const presets = [1.0, 1.2, 1.5, 2.0];
+  document.querySelectorAll('.lev-btn').forEach((b, i) => {
+    b.classList.toggle('active', Math.abs(presets[i] - v) < 0.001);
+  });
 }
 
 // ── Tab 切換 ──
