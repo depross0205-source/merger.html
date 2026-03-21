@@ -2,70 +2,94 @@
 <html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
 <title>矛與盾 V8.4 Full</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
 <style>
-body{background:#0a0c10;color:#e2eaf8;font-family:Arial;padding:20px}
-button{margin:5px;padding:8px}
+body{
+  background:#0a0c10;
+  color:#e2eaf8;
+  font-family:'IBM Plex Sans',sans-serif;
+  padding:20px;
+}
+button{
+  padding:10px;
+  margin:5px;
+  cursor:pointer;
+}
+input{
+  padding:5px;
+  margin:5px;
+}
+.section{
+  border:1px solid #333;
+  padding:10px;
+  margin-bottom:15px;
+}
 </style>
 </head>
+
 <body>
 
 <h2>🛡️ 矛與盾 V8.4 Full</h2>
+<div class="section">
+  <h3>⚙️ 回測設定</h3>
 
-<!-- ===== 新增 Cash 控制 ===== -->
-<div>
-  <label>Cash Yield</label>
+  <label>Cash Yield：</label>
   <input type="checkbox" id="useCash" checked>
-  <label>利率%</label>
+
+  <label>利率 (%)：</label>
   <input type="number" id="cashRate" value="4" step="0.1">
+
+  <br><br>
+
+  <button onclick="runBacktest()">▶ 執行回測</button>
+  <button onclick="exportTrades()">⬇ 交易紀錄 CSV</button>
+  <button onclick="exportNAV()">⬇ NAV CSV</button>
 </div>
-
-<button onclick="runBacktest()">▶ 回測</button>
-<button onclick="exportTrades()">⬇ Trades CSV</button>
-<button onclick="exportNAV()">⬇ NAV CSV</button>
-
-<canvas id="navChart" height="120"></canvas>
-
+<div class="section">
+  <h3>📊 NAV 曲線</h3>
+  <canvas id="navChart" height="120"></canvas>
+</div>
 <script>
 
 let DB = [];
 let BT_RESULT = null;
 
-// ===== 模擬資料（你可換掉）=====
-for(let i=0;i<1200;i++){
+// ===== 模擬資料（可換成你原本 DB）=====
+for(let i=0;i<1500;i++){
   DB.push({
     d: "2020-"+String((i%12)+1).padStart(2,'0')+"-"+String((i%28)+1).padStart(2,'0'),
-    sp: 3000 + i*3 + Math.random()*40,
+    sp: 3000 + i*2 + Math.random()*50,
     vix: 15+Math.random()*10,
-    cape: 25+Math.random()*5,
     hy: 3+Math.random(),
     tips: 1.5,
+    cape: 25+Math.random()*5,
     y10: 4,
     y2: 3.5
   });
 }
-
-function runBacktest(){
+  function runBacktest(){
 
   const useCash = document.getElementById('useCash').checked;
   const cashRate = parseFloat(document.getElementById('cashRate').value)/100;
-  const cashDaily = cashRate/252;
+  const cashDaily = cashRate / 252;
 
   let eqA=100000, eqB=100000, eqC=100000, eqD=100000, eqBH=100000;
 
   let pA=1, pB=1, pC=1, pD=1;
 
-  let trades=[];
+  const trades = [];
 
   for(let i=1;i<DB.length;i++){
 
     const r = DB[i];
     const prev = DB[i-1];
 
-    const ret = (r.sp - prev.sp)/prev.sp;
+    const ret = (r.sp - prev.sp) / prev.sp;
 
-    // ===== 模擬 score =====
+    // ===== 簡化 score（可接你原本）=====
     const score = 50 + (Math.random()*40-20);
 
     // ===== Regime =====
@@ -73,25 +97,21 @@ function runBacktest(){
     if(r.vix < 18) regime="ON";
     if(r.vix > 25) regime="OFF";
 
-    // ===== 簡化策略 =====
+    // ===== A/B 策略 =====
     pA = score>60 ? 1.5 : score<40 ? 0 : 1;
     pB = score>60 ? 1.2 : score<40 ? 0 : 1;
 
+    // ===== C/D =====
     pC = (pA>0 && pB>0) ? 1 : 0;
     pD = Math.min(pA,pB);
 
-    // ===== V8.4 核心（Cash）=====
+    // ===== 🔥 V8.4 Cash 核心 =====
     function calc(eq,p){
-
-      let total;
-
+      let total = p * ret;
       if(useCash){
-        total = (p*ret) + ((1-p)*cashDaily);
-      }else{
-        total = p*ret;
+        total += (1 - p) * cashDaily;
       }
-
-      return eq*(1+total);
+      return eq * (1 + total);
     }
 
     eqA = calc(eqA,pA);
@@ -99,8 +119,9 @@ function runBacktest(){
     eqC = calc(eqC,pC);
     eqD = calc(eqD,pD);
 
-    eqBH = eqBH*(1+ret);
+    eqBH *= (1 + ret);
 
+    // ===== 🔥 交易紀錄 =====
     trades.push({
       date:r.d,
       price:r.sp,
@@ -120,9 +141,7 @@ function runBacktest(){
 
   drawChart(trades);
 }
-
-// ===== 畫圖 =====
-function drawChart(trades){
+  function drawChart(trades){
 
   const ctx = document.getElementById('navChart');
 
@@ -135,16 +154,17 @@ function drawChart(trades){
         {label:'B',data:trades.map(x=>x.B_eq),borderColor:'lime'},
         {label:'C',data:trades.map(x=>x.C_eq),borderColor:'cyan'},
         {label:'D',data:trades.map(x=>x.D_eq),borderColor:'magenta'},
-        {label:'BH',data:trades.map(x=>x.BH),borderColor:'gray'}
+        {label:'B&H',data:trades.map(x=>x.BH),borderColor:'gray'}
       ]
     }
   });
 }
+  function exportTrades(){
 
-// ===== 匯出 =====
-function exportTrades(){
-
-  if(!BT_RESULT){alert('先回測');return;}
+  if(!BT_RESULT){
+    alert('請先回測');
+    return;
+  }
 
   const rows = BT_RESULT.trades;
 
@@ -154,30 +174,34 @@ function exportTrades(){
 
   downloadCSV(header,csv,'trades_v84.csv');
 }
-
-function exportNAV(){
+  function exportNAV(){
 
   const rows = BT_RESULT.trades.map(r=>({
     date:r.date,
-    A:r.A_eq,B:r.B_eq,C:r.C_eq,D:r.D_eq,BH:r.BH
+    A:r.A_eq,
+    B:r.B_eq,
+    C:r.C_eq,
+    D:r.D_eq,
+    BH:r.BH
   }));
 
   const header = Object.keys(rows[0]).join(',');
   const csv = rows.map(r=>Object.values(r).join(','));
 
-  downloadCSV(header,csv,'nav_v84.csv');
-}
-
+  downloadCSV(header,csv,'nav_v84.csv');ㄞ
+  }
 function downloadCSV(header,rows,name){
 
-  const blob = new Blob([[header,...rows].join('\n')],{type:'text/csv'});
-  const a = document.createElement('a');
+  const blob = new Blob(
+    [[header,...rows].join('\n')],
+    {type:'text/csv'}
+  );
 
+  const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
   a.download = name;
   a.click();
 }
-
-</script>
+  </script>
 </body>
 </html>
