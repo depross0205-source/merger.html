@@ -54,8 +54,8 @@ button{padding:10px 16px;border:none;border-radius:3px;cursor:pointer;font-size:
 .stat-box .s{font-size:11px;color:var(--muted);margin-top:2px}
 .upload-label{display:block;background:var(--surface2);border:2px dashed var(--border-hi);padding:12px;text-align:center;cursor:pointer;color:var(--accent);font-weight:700;border-radius:3px;margin-bottom:8px}
 .upload-label:hover{border-color:var(--accent)}
-/* iOS Safari 不支援 display:none 的 file input 觸發，改用 opacity+position */
-input[type=file]{position:absolute;opacity:0;width:1px;height:1px;overflow:hidden;pointer-events:none}
+/* input 藏在 label 內部，不需要 display:none；iOS Safari 用包裹寫法觸發 */
+input[type=file]{position:absolute;opacity:0;width:0;height:0;overflow:hidden}
 #fetchLog{font-size:12px;color:var(--muted);font-family:'IBM Plex Mono',monospace;margin-top:8px;min-height:16px;word-break:break-all}
 /* ── cfg ── */
 .cfg-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-bottom:16px}
@@ -187,16 +187,13 @@ td{padding:9px;border-bottom:1px solid var(--border)}
       <div><div class="step-title">上傳現有歷史資料庫</div><div class="step-sub">載入 CSV 作為基礎，後續補齊</div></div>
     </div>
     <div class="step-body">
-      <label class="upload-label" for="csvUpload">📂 點擊選擇 CSV 檔案</label>
-      <!-- accept 需同時列 MIME type，iOS Safari 才能正確顯示 CSV 檔案 -->
-      <input type="file" id="csvUpload"
-        accept=".csv,text/csv,text/plain,application/csv,application/vnd.ms-excel"
-        onchange="loadCSV(event)">
-      <!-- iOS 備援按鈕：直接 JS 觸發 input.click() -->
-      <button class="btn-outline" style="margin-bottom:8px;font-size:12px"
-        onclick="document.getElementById('csvUpload').click()">
-        📱 iOS 備援：點此選擇檔案
-      </button>
+      <!-- label 直接包住 input：iOS Safari 最可靠的觸發方式，不依賴 for/id 綁定 -->
+      <label class="upload-label">
+        📂 點擊選擇 CSV 檔案
+        <input type="file" id="csvUpload"
+          accept=".csv,text/csv,text/plain,application/csv,application/vnd.ms-excel"
+          onchange="loadCSV(event)">
+      </label>
       <div id="csvStatus" style="font-size:12px;color:var(--green);min-height:16px;margin-bottom:10px"></div>
       <div class="stat-row">
         <div class="stat-box"><div class="n" id="dbCount">0 筆</div><div class="s">記憶體資料庫</div></div>
@@ -1033,9 +1030,7 @@ function runBacktest(){
             sp:SP[i].toFixed(1),s:newSA,ps:psA,db:dbA,clearDays:cfg.A.clearDays,
             hits:stk.hits.filter(h=>!h.endsWith('✗')).join(' ')});
         }
-        // ★ 修正1：今日報酬用「舊倉 pA」，訊號在收盤後才切換到 nA.p（隔日生效）
-        // ★ 修正2：手續費 = |新倉−舊倉| × cost，對「換倉量」收費，不是乘在報酬上
-        eqA *= (1 + pA * ret - Math.abs(nA.p - pA) * cfg.cost);
+        eqA*=(1+nA.p*ret*(1-(nA.p!==pA?cfg.cost:0)));
         psA=newSA; sA=newSA; pA=nA.p; mA=nA.m;
         f1A=Math.round(f1); f5A=Math.round(f5b); ycA=Math.round(ycScore);
 
@@ -1058,8 +1053,7 @@ function runBacktest(){
             sp:SP[i].toFixed(1),s:newSB,ps:psB,db:dbB,clearDays:cfg.B.clearDays,
             hits:stk.hits.filter(h=>!h.endsWith('✗')).join(' ')});
         }
-        // ★ 同上修正：舊倉 pB 賺今日報酬，換倉量收手續費
-        eqB *= (1 + pB * ret - Math.abs(nB.p - pB) * cfg.cost);
+        eqB*=(1+nB.p*ret*(1-(nB.p!==pB?cfg.cost:0)));
         psB=newSB; sB=newSB; pB=nB.p; mB=nB.m;
         f1B=Math.round(f1); f5B=Math.round(f5b); ycB=Math.round(ycScore);
 
@@ -1072,8 +1066,7 @@ function runBacktest(){
         if(newMC!==mC) logs.push({d:DATES[i],mtd:'C',type:'change',fm:mC,to:newMC,
           sp:SP[i].toFixed(1),s:'--',ps:'--',db:'--',clearDays:'--',hits:''});
         const newPC=newMC==='NORMAL'?cfg.pos.base:0;
-        // ★ 同上修正
-        eqC *= (1 + pC * ret - Math.abs(newPC - pC) * cfg.cost);
+        eqC*=(1+newPC*ret*(1-(newPC!==pC?cfg.cost:0)));
         pC=newPC; mC=newMC;
 
         // ── Method D ──
@@ -1087,8 +1080,7 @@ function runBacktest(){
         if(newMD!==mD) logs.push({d:DATES[i],mtd:'D',type:'change',fm:mD,to:newMD,
           sp:SP[i].toFixed(1),s:'--',ps:'--',db:'--',clearDays:'--',hits:''});
         const newPD=newMD==='PLUS'?cfg.pos.max:(newMD==='NORMAL'?cfg.pos.base:(newMD==='STRIKE'?cfg.pos.strike:0));
-        // ★ 同上修正
-        eqD *= (1 + pD * ret - Math.abs(newPD - pD) * cfg.cost);
+        eqD*=(1+newPD*ret*(1-(newPD!==pD?cfg.cost:0)));
         pD=newPD; mD=newMD;
 
         eqBH=cfg.cap*(SP[i]/sp0);
