@@ -52,10 +52,10 @@ button{padding:10px 16px;border:none;border-radius:3px;cursor:pointer;font-size:
 .stat-box{background:var(--bg);border:1px solid var(--border);padding:10px 14px;border-radius:3px;flex:1;min-width:140px}
 .stat-box .n{font-size:20px;font-weight:700;font-family:'IBM Plex Mono',monospace;color:var(--white)}
 .stat-box .s{font-size:11px;color:var(--muted);margin-top:2px}
-.upload-label{display:block;background:var(--surface2);border:2px dashed var(--border-hi);padding:12px;text-align:center;cursor:pointer;color:var(--accent);font-weight:700;border-radius:3px;margin-bottom:8px}
+.upload-label{display:block;position:relative;overflow:hidden;background:var(--surface2);border:2px dashed var(--border-hi);padding:12px;text-align:center;cursor:pointer;color:var(--accent);font-weight:700;border-radius:3px;margin-bottom:8px}
 .upload-label:hover{border-color:var(--accent)}
-/* input 藏在 label 內部，不需要 display:none；iOS Safari 用包裹寫法觸發 */
-input[type=file]{display:none}
+/* iOS Safari 需要 input 有實際尺寸才能觸發 file picker，不可用 display:none */
+input[type=file]{position:absolute;top:0;left:0;width:100%;height:100%;opacity:0;cursor:pointer;font-size:16px}
 #fetchLog{font-size:12px;color:var(--muted);font-family:'IBM Plex Mono',monospace;margin-top:8px;min-height:16px;word-break:break-all}
 /* ── cfg ── */
 .cfg-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-bottom:16px}
@@ -187,8 +187,10 @@ td{padding:9px;border-bottom:1px solid var(--border)}
       <div><div class="step-title">上傳現有歷史資料庫</div><div class="step-sub">載入 CSV 作為基礎，後續補齊</div></div>
     </div>
     <div class="step-body">
-      <label class="upload-label" for="csvUpload">📂 點擊選擇 CSV 檔案</label>
-      <input type="file" id="csvUpload" accept=".csv" onchange="loadCSV(event)">
+      <label class="upload-label">
+        📂 點擊選擇 CSV 檔案
+        <input type="file" id="csvUpload" accept=".csv" onchange="loadCSV(event)">
+      </label>
       <div id="csvStatus" style="font-size:12px;color:var(--green);min-height:16px;margin-bottom:10px"></div>
       <div class="stat-row">
         <div class="stat-box"><div class="n" id="dbCount">0 筆</div><div class="s">記憶體資料庫</div></div>
