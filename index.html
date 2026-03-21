@@ -734,9 +734,8 @@ function exportTrades(){
   a.style.display='none'; document.body.appendChild(a); a.click(); document.body.removeChild(a);
 }
 
-
+function switchTrades(method, btn){
   currentTradeMethod=method;
-  // 重設所有 tab 樣式
   document.querySelectorAll('.method-tab').forEach(t=>{
     t.className='method-tab';
   });
