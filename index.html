@@ -382,11 +382,7 @@ color:#f8faff;line-height:1.2}
   <!-- 圖表 -->
 
   <div class="chart-wrap">
-    <div class="chart-mode-bar">
-      <button class="chart-mode-btn active" id="btnCompound" onclick="setChartMode('compound',this)">📈 每日複利</button>
-      <button class="chart-mode-btn" id="btnLinear" onclick="setChartMode('wave',this)">📊 波段複利（真實操作）</button>
-      <span class="chart-mode-hint" id="chartModeHint">每日重平衡 × 倉位倍數</span>
-    </div>
+    <div style="font-size:11px;color:#3a4560;font-family:'IBM Plex Mono',monospace;margin-bottom:10px">每日重平衡複利（equity × (1 + pos × 當日漲幅)）</div>
     <canvas id="navChart" height="300"></canvas>
   </div>
 
@@ -431,9 +427,8 @@ let navChart = null;
 // 儲存四份交易歷程供切換
 let allTrades = {orig:[], a:[], b:[], c:[]};
 let currentTradeMethod = 'orig';
-// 儲存兩套曲線供圖表切換
+// 儲存曲線供圖表使用
 let curveData = {};
-let chartMode = 'compound';
 
 const lerp = (x,x0,x1,y0,y1) => y0+(y1-y0)*Math.max(0,Math.min(1,(x-x0)/(x1-x0)));
 const $ = id => document.getElementById(id);
@@ -845,17 +840,6 @@ function runBacktest(){
 
       let eq=100,eqA=100,eqB=100,eqC=100,bh=100;
       const cOrig=[100],cA=[100],cB=[100],cC=[100],cBH=[100],labels=[dates[0]];
-      // 波段複利：每次換手以當下本金為新基礎，波段內按比例計算
-      // wb = { sp: 進場點SP, eq: 進場時本金, pos: 持倉 }
-      let wbOrig=null, wbA=null, wbB=null, wbC=null;
-      const wbBH={sp:initSP, eq:100, pos:1.0};
-      const wOrig=[100], wAw=[100], wBw=[100], wCw=[100], wBHw=[100];
-
-      // 計算波段當前市值（未實現）
-      const wMtm=(wb,spNow)=>{
-        if(!wb||wb.pos===0) return wb?wb.eq:100;
-        return wb.eq*(1+wb.pos*(spNow-wb.sp)/wb.sp);
-      };
 
       allTrades={orig:[],a:[],b:[],c:[]};
       let prevOrig=null,prevA=null,prevB=null,prevC=null;
@@ -905,53 +889,26 @@ function runBacktest(){
         dayData.push({date:dates[i], sOrig, sA:sAv, sB:sBv, regime:reg,
           posOrig, posA:posAv, posB:posBv, posC:posCv, rsi:rsiVal});
 
-        // 複利（每日重平衡）
+        // 每日複利（每日重平衡）
         eq*=(1+posOrig*ret); eqA*=(1+posAv*ret);
         eqB*=(1+posBv*ret); eqC*=(1+posCv*ret);
         bh=100*(spA[i]/initSP);
         cOrig.push(eq); cA.push(eqA); cB.push(eqB); cC.push(eqC); cBH.push(bh);
 
-        // 波段複利：換手時鎖定獲利，以新本金開新波段
-        const wStep=(wb, prevPos, newPos, spNow)=>{
-          if(!wb){
-            // 首次建立基準
-            return {sp:spNow, eq:100, pos:newPos};
-          }
-          const cur=wMtm(wb, spNow);  // 鎖定本波獲利
-          if(newPos!==prevPos){
-            return {sp:spNow, eq:cur, pos:newPos};  // 換手：更新基準
-          }
-          return {sp:wb.sp, eq:wb.eq, pos:wb.pos};  // 未換手：基準不變
-        };
-        wbOrig=wStep(wbOrig, prevOrig, posOrig, spA[i]);
-        wbA   =wStep(wbA,    prevA,    posAv,   spA[i]);
-        wbB   =wStep(wbB,    prevB,    posBv,   spA[i]);
-        wbC   =wStep(wbC,    prevC,    posCv,   spA[i]);
-        // B&H 波段複利 = 每日複利（1.0× 全程持有，兩者等價）
-        const wBHval=wMtm(wbBH, spA[i]);
-
-        wOrig.push(wMtm(wbOrig,spA[i]));
-        wAw.push(wMtm(wbA,spA[i]));
-        wBw.push(wMtm(wbB,spA[i]));
-        wCw.push(wMtm(wbC,spA[i]));
-        wBHw.push(wBHval);
-
         labels.push(dates[i]);
       }
 
-      // ── 儲存兩套曲線 ──
+      // ── 儲存曲線 ──
       const step=Math.max(1,Math.floor(labels.length/150));
       const smpl=(arr)=>arr.filter((_,i)=>i%step===0);
       const lblS=smpl(labels);
       curveData={
         labels:lblS,
-        compound:[smpl(cOrig),smpl(cA),smpl(cB),smpl(cC),smpl(cBH)],
-        wave:    [smpl(wOrig),smpl(wAw),smpl(wBw),smpl(wCw),smpl(wBHw)]
+        compound:[smpl(cOrig),smpl(cA),smpl(cB),smpl(cC),smpl(cBH)]
       };
 
-      // ── 績效卡（每日複利 + 波段複利） ──
+      // ── 績效卡 ──
       const statsC=[calcStats(cOrig),calcStats(cA),calcStats(cB),calcStats(cC),calcStats(cBH)];
-      const statsW=[calcStats(wOrig),calcStats(wAw),calcStats(wBw),calcStats(wCw),calcStats(wBHw)];
       const cards=[
         {cls:'m-orig',label:'原始策略',color:'#00e5a0'},
         {cls:'m-a',   label:'方法 A｜HY Delta',color:'#7eb8ff'},
@@ -962,22 +919,15 @@ function runBacktest(){
       const mRow=(label,val,col)=>`<div class="m-row"><span>${label}</span><span class="m-val" style="${col?'color:'+col:''}">${val}</span></div>`;
       const fmtPct=(s,v)=>s[v]==='--'?'--':(parseFloat(s[v])>=0?'+':'')+s[v]+'%';
       $('metricsGrid').innerHTML=cards.map((c,ci)=>{
-        const sc=statsC[ci], sw=statsW[ci];
+        const sc=statsC[ci];
         const tcC=parseFloat(sc.total)>=0?'#00e5a0':'#ff4d6d';
-        const tcW=parseFloat(sw.total)>=0?'#00e5a0':'#ff4d6d';
         return`<div class="metric-card ${c.cls}">
           <div class="m-title" style="color:${c.color}">${c.label}</div>
-          <div class="m-mode-label m-mode-compound">每日複利</div>
           ${mRow('區間報酬',fmtPct(sc,'total'),tcC)}
           ${mRow('CAGR',sc.cagr==='--'?'--':sc.cagr+'%','')}
           ${mRow('MDD',sc.mdd==='--'?'--':sc.mdd+'%','#ff4d6d')}
           ${mRow('Sharpe',sc.sharpe,'#00e5a0')}
-          <div class="m-divider"></div>
-          <div class="m-mode-label m-mode-linear">波段複利</div>
-          ${mRow('區間報酬',fmtPct(sw,'total'),tcW)}
-          ${mRow('CAGR',sw.cagr==='--'?'--':sw.cagr+'%','')}
-          ${mRow('MDD',sw.mdd==='--'?'--':sw.mdd+'%','#ff4d6d')}
-          ${mRow('Sharpe',sw.sharpe,'#ffb830')}
+          ${mRow('StdDev',sc.std==='--'?'--':sc.std+'%','')}
         </div>`;
       }).join('');
 
@@ -994,11 +944,7 @@ function runBacktest(){
       currentTradeMethod='orig';
       renderTradeTable(allTrades.orig,'orig');
 
-      // ── 圖表（預設複利） ──
-      chartMode='compound';
-      $('btnCompound').classList.add('active');
-      $('btnLinear').classList.remove('active');
-      $('chartModeHint').textContent='每日重平衡 × 倉位倍數（理論天花板）';
+      // ── 圖表 ──
       drawChart();
 
       const tabs=document.querySelectorAll('.tab');
@@ -1012,7 +958,7 @@ function runBacktest(){
   },80);
 }
 
-// ── 圖表繪製（可切換複利/單利） ──
+// ── 圖表繪製 ──
 const CHART_COLORS=[
   {label:'原始策略',border:'#00e5a0',width:2},
   {label:'方法 A',  border:'#7eb8ff',width:1.5},
@@ -1022,9 +968,8 @@ const CHART_COLORS=[
 ];
 function drawChart(){
   if(!curveData.labels) return;
-  const curves = chartMode==='compound' ? curveData.compound : curveData.wave;
-  const datasets = CHART_COLORS.map((c,i)=>({
-    label:c.label, data:curves[i],
+  const datasets=CHART_COLORS.map((c,i)=>({
+    label:c.label, data:curveData.compound[i],
     borderColor:c.border, borderWidth:c.width, pointRadius:0, tension:.1
   }));
   if(navChart){navChart.destroy();navChart=null;}
@@ -1042,16 +987,6 @@ function drawChart(){
       }
     }
   });
-}
-
-function setChartMode(mode, btn){
-  chartMode=mode;
-  document.querySelectorAll('.chart-mode-btn').forEach(b=>b.classList.remove('active'));
-  btn.classList.add('active');
-  $('chartModeHint').textContent = mode==='compound'
-    ? '每日重平衡 × 倉位倍數（理論天花板）'
-    : '換手才重算本金，賺到的錢投入下一波（真實操作）';
-  drawChart();
 }
 
 // ── 槓桿快速切換 ──
