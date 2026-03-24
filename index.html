@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
-<title>🛡️ 矛與盾 V10 FINAL</title>
+<title>🛡️ 矛與盾 V10.1 FINAL</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
 body{background:#0a0c10;color:#e2eaf8;font-family:sans-serif;padding:20px}
@@ -12,7 +12,7 @@ button{padding:8px 12px;font-weight:bold;cursor:pointer}
 </head>
 <body>
 
-<h2>🛡️ 矛與盾 V10 FINAL</h2>
+<h2>🛡️ 矛與盾 V10.1 FINAL</h2>
 
 <div class="card">
 <input type="file" id="csv">
@@ -34,7 +34,7 @@ document.getElementById('csv').onchange=e=>{
     DB=l.map(x=>{
       const c=x.split(',');
       return {
-        d:c[0],
+        d:new Date(c[0]),
         sp:+c[1],
         cape:+c[6],
         hy:+c[3],
@@ -49,20 +49,34 @@ document.getElementById('csv').onchange=e=>{
 
 const lp=(x,x0,x1,y0,y1)=>y0+(y1-y0)*Math.max(0,Math.min(1,(x-x0)/(x1-x0)));
 
+function detectFrequency(){
+  let diffs=[];
+  for(let i=1;i<Math.min(20,DB.length);i++){
+    diffs.push((DB[i].d - DB[i-1].d)/(1000*60*60*24));
+  }
+  const avg=diffs.reduce((a,b)=>a+b,0)/diffs.length;
+
+  if(avg<2) return 252;
+  if(avg<10) return 52;
+  return 12;
+}
+
 function run(){
 
-let eqA=100000, eqB=100000, bh=100000;
-let modeA='N', modeB='N';
-let curve=[];
-let ddSeries=[];
+let eqA=100000, bh=100000;
+let modeA='N';
+
+let curve=[], ddSeries=[], returns=[];
 
 let peakA=eqA, peakBH=bh;
+
+const freq = detectFrequency();
 
 for(let i=1;i<DB.length;i++){
 
   const r=(DB[i].sp-DB[i-1].sp)/DB[i-1].sp;
+  returns.push(r);
 
-  // ===== Score =====
   const fVal=lp(100/DB[i].cape-DB[i].tips,0,4,10,100);
   const fCredit=lp(DB[i].hy*100,250,600,80,20);
   const yc=DB[i].y10-DB[i].y2;
@@ -70,42 +84,35 @@ for(let i=1;i<DB.length;i++){
 
   const score=0.35*fVal+0.35*fCredit+0.3*fCurve;
 
-  // ===== Crash Trigger =====
   let force = r < -0.025;
 
-  // ===== Decide Mode FIRST =====
   let newA = score>=60?'P':score>=40?'N':'C';
   if(force) newA='C';
 
-  let newB = score>=60?'P':'C';
-
   modeA=newA;
-  modeB=newB;
 
-  // ===== Apply Exposure =====
   const expA = modeA==='P'?1.5:modeA==='N'?1:0;
-  const expB = modeB==='P'?1:0;
 
   eqA *= (1 + expA*r);
-  eqB *= (1 + expB*r);
   bh *= (1 + r);
 
-  // ===== Drawdown =====
   peakA = Math.max(peakA, eqA);
   peakBH = Math.max(peakBH, bh);
 
   ddSeries.push({
-    A:(eqA/peakA-1)*100,
-    BH:(bh/peakBH-1)*100
+    A:(eqA/peakA-1),
+    BH:(bh/peakBH-1)
   });
 
-  curve.push({d:DB[i].d,A:eqA,B:eqB,BH:bh});
+  curve.push({d:DB[i].d,A:eqA,BH:bh});
 }
 
 // ===== Metrics =====
-function calcMetrics(series){
+function calcMetrics(series, returns){
+
+  const years = series.length / freq;
+
   const start=series[0], end=series[series.length-1];
-  const years=series.length/252;
   const cagr=Math.pow(end/start,1/years)-1;
 
   let peak=series[0], maxDD=0;
@@ -114,26 +121,33 @@ function calcMetrics(series){
     maxDD=Math.min(maxDD,(v/peak-1));
   }
 
-  return {cagr,maxDD};
+  const avg = returns.reduce((a,b)=>a+b,0)/returns.length;
+  const std = Math.sqrt(returns.map(x=>(x-avg)**2).reduce((a,b)=>a+b)/returns.length);
+
+  const sharpe = (avg*freq) / (std*Math.sqrt(freq));
+
+  return {cagr,maxDD,sharpe};
 }
 
-const mA=calcMetrics(curve.map(x=>x.A));
-const mBH=calcMetrics(curve.map(x=>x.BH));
+const mA=calcMetrics(curve.map(x=>x.A), returns);
+const mBH=calcMetrics(curve.map(x=>x.BH), returns);
 
 document.getElementById('metrics').innerHTML=`
-A CAGR: ${(mA.cagr*100).toFixed(1)}% |
-A DD: ${(mA.maxDD*100).toFixed(1)}%<br>
-BH CAGR: ${(mBH.cagr*100).toFixed(1)}% |
-BH DD: ${(mBH.maxDD*100).toFixed(1)}%
+📊 Frequency: ${freq===252?'Daily':freq===52?'Weekly':'Monthly'}<br><br>
+🟡 A CAGR: ${(mA.cagr*100).toFixed(1)}%<br>
+🟡 A MaxDD: ${(mA.maxDD*100).toFixed(1)}%<br>
+🟡 A Sharpe: ${mA.sharpe.toFixed(2)}<br><br>
+⚫ BH CAGR: ${(mBH.cagr*100).toFixed(1)}%<br>
+⚫ BH MaxDD: ${(mBH.maxDD*100).toFixed(1)}%
 `;
 
 // ===== Chart =====
 new Chart(nav.getContext('2d'),{
   type:'line',
   data:{
-    labels:curve.map(x=>x.d),
+    labels:curve.map(x=>x.d.toISOString().slice(0,10)),
     datasets:[
-      {label:'A',data:curve.map(x=>x.A)},
+      {label:'Strategy',data:curve.map(x=>x.A)},
       {label:'B&H',data:curve.map(x=>x.BH)}
     ]
   }
@@ -142,7 +156,7 @@ new Chart(nav.getContext('2d'),{
 new Chart(dd.getContext('2d'),{
   type:'line',
   data:{
-    labels:curve.map(x=>x.d),
+    labels:curve.map(x=>x.d.toISOString().slice(0,10)),
     datasets:[
       {label:'A DD',data:ddSeries.map(x=>x.A)},
       {label:'BH DD',data:ddSeries.map(x=>x.BH)}
