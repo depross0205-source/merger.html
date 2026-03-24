@@ -2,7 +2,7 @@
 <html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
-<title>🛡️ 矛與盾 V10.1 FINAL</title>
+<title>🛡️ 矛與盾 V10.2 FINAL</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <style>
 body{background:#0a0c10;color:#e2eaf8;font-family:sans-serif;padding:20px}
@@ -12,7 +12,7 @@ button{padding:8px 12px;font-weight:bold;cursor:pointer}
 </head>
 <body>
 
-<h2>🛡️ 矛與盾 V10.1 FINAL</h2>
+<h2>🛡️ 矛與盾 V10.2 FINAL（實戰版）</h2>
 
 <div class="card">
 <input type="file" id="csv">
@@ -64,7 +64,7 @@ function detectFrequency(){
 function run(){
 
 let eqA=100000, bh=100000;
-let modeA='N';
+let modeA='N', prevMode='N';
 
 let curve=[], ddSeries=[], returns=[];
 
@@ -72,11 +72,24 @@ let peakA=eqA, peakBH=bh;
 
 const freq = detectFrequency();
 
+// ===== Frequency-based parameters =====
+const crashThreshold =
+  freq===252 ? -0.025 :
+  freq===52 ? -0.05 :
+  -0.10;
+
+const leveragePlus =
+  freq===12 ? 1.2 :
+  1.5;
+
+const tradeCost = 0.002; // 0.2%
+
 for(let i=1;i<DB.length;i++){
 
   const r=(DB[i].sp-DB[i-1].sp)/DB[i-1].sp;
   returns.push(r);
 
+  // ===== Score =====
   const fVal=lp(100/DB[i].cape-DB[i].tips,0,4,10,100);
   const fCredit=lp(DB[i].hy*100,250,600,80,20);
   const yc=DB[i].y10-DB[i].y2;
@@ -84,18 +97,32 @@ for(let i=1;i<DB.length;i++){
 
   const score=0.35*fVal+0.35*fCredit+0.3*fCurve;
 
-  let force = r < -0.025;
+  // ===== Crash trigger =====
+  let force = r < crashThreshold;
 
+  // ===== Decide FIRST =====
   let newA = score>=60?'P':score>=40?'N':'C';
   if(force) newA='C';
 
   modeA=newA;
 
-  const expA = modeA==='P'?1.5:modeA==='N'?1:0;
+  // ===== Exposure =====
+  const expA =
+    modeA==='P'? leveragePlus :
+    modeA==='N'? 1 :
+    0;
 
+  // ===== Transaction Cost =====
+  if(modeA !== prevMode){
+    eqA *= (1 - tradeCost);
+  }
+  prevMode = modeA;
+
+  // ===== Apply Return =====
   eqA *= (1 + expA*r);
   bh *= (1 + r);
 
+  // ===== Drawdown =====
   peakA = Math.max(peakA, eqA);
   peakBH = Math.max(peakBH, bh);
 
