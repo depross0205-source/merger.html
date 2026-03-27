@@ -1,161 +1,107 @@
-<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-    <meta charset="UTF-8">
-    <title>Fearless Console V10.0 - Momentum & Volatility Engine</title>
-    <style>
-        :root { --teal: #20c997; --bg: #121212; --surface: #1e1e1e; --text: #e0e0e0; }
-        body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); padding: 20px; }
-        .card { background: var(--surface); border-radius: 8px; padding: 20px; margin-bottom: 20px; border: 1px solid #333; }
-        h2 { color: var(--teal); border-bottom: 1px solid var(--teal); padding-bottom: 10px; }
-        .upload-group { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-        .file-box { border: 2px dashed #444; padding: 15px; text-align: center; border-radius: 5px; }
-        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-        th, td { text-align: left; padding: 12px; border-bottom: 1px solid #333; }
-        th { color: var(--teal); font-size: 12px; text-transform: uppercase; }
-        .btn { background: var(--teal); color: black; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-weight: bold; }
-        .status { font-size: 12px; color: #888; margin-top: 5px; }
-    </style>
-</head>
-<body>
-
-<div class="card">
-    <h2>V10.0 數據上傳中心</h2>
-    <div class="upload-group">
-        <div class="file-box">
-            <div>📈 <b>月頻歷史資料 (CSV)</b></div>
-            <input type="file" id="monthlyFile" accept=".csv" onchange="handleFile('monthly')">
-            <div id="monthlyStatus" class="status">格式：Date, Ticker1, Ticker2...</div>
+<div class="card" style="border-top: 4px solid var(--teal); background: #1a1a1a; color: white; padding: 20px;">
+    <h3 style="color:var(--teal)">📡 V10.5 自動化數據採集中心</h3>
+    
+    <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 20px;">
+        <div class="cfg-box">
+            <label>FRED API Key:</label>
+            <input type="text" id="fredKey" placeholder="輸入你的 FRED API Key" style="width:100%; background:#333; color:white; border:1px solid #555;">
         </div>
-        <div class="file-box">
-            <div>⚡ <b>近日 252 日資料 (CSV)</b></div>
-            <input type="file" id="dailyFile" accept=".csv" onchange="handleFile('daily')">
-            <div id="dailyStatus" class="status">用於計算精準波動率 (Sigma)</div>
+        <div class="cfg-box">
+            <label>候選標的 (逗號分隔):</label>
+            <input type="text" id="tickerList" value="VOO,VTV,QQQ,IWM,VEA,VWO,GLD" style="width:100%; background:#333; color:white; border:1px solid #555;">
         </div>
     </div>
-</div>
 
-<div class="card">
-    <h2>策略參數設定</h2>
-    <label>市場盾牌分數 (0-100)：</label>
-    <input type="number" id="shieldScore" value="65" style="width: 50px;">
-    <label>現金利率 (%)：</label>
-    <input type="number" id="cashRate" value="4.5" step="0.1" style="width: 50px;">
-    <button class="btn" onclick="runAnalysis()" style="margin-left: 20px;">▶ 執行 V10.0 運算</button>
-</div>
-
-<div class="card" id="resultCard" style="display:none;">
-    <h2>📊 分析結果：建議配置 (Volatility Adjusted)</h2>
-    <table id="resultTable">
-        <thead>
-            <tr>
-                <th>代碼</th><th>綜合 Z-Score</th><th>年化波動率 σ</th><th>TS 狀態</th><th>建議權重</th>
-            </tr>
-        </thead>
-        <tbody id="resultBody"></tbody>
-    </table>
+    <button class="btn-teal" onclick="fetchAllData()" id="fetchBtn">🌐 開始全自動抓取與計算</button>
+    <div id="fetchLog" style="font-size:11px; color:#888; margin-top:10px; font-family:monospace;"></div>
 </div>
 
 <script>
-let rawData = { monthly: null, daily: null };
+// 使用 YH Finance 的公開 API (需透過中繼代理或 GAS)
+const YH_PROXY = "https://query1.finance.yahoo.com/v8/finance/chart/";
+const FRED_BASE = "https://api.stlouisfed.org/fred/series/observations";
 
-// 1. 檔案讀取處理
-function handleFile(type) {
-    const file = document.getElementById(type + 'File').files[0];
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        const text = e.target.result;
-        rawData[type] = parseCSV(text);
-        document.getElementById(type + 'Status').innerText = `已載入 ${Object.keys(rawData[type]).length} 個標的`;
-    };
-    reader.readAsText(file);
-}
+async function fetchAllData() {
+    const btn = document.getElementById('fetchBtn');
+    const log = document.getElementById('fetchLog');
+    const tickers = document.getElementById('tickerList').value.split(',');
+    const fredKey = document.getElementById('fredKey').value;
 
-function parseCSV(text) {
-    const lines = text.split('\n').filter(l => l.trim() !== '');
-    const headers = lines[0].split(',').map(h => h.trim());
-    const data = {};
-    headers.slice(1).forEach(h => data[h] = []);
+    if(!fredKey) return alert("請輸入 FRED API Key！");
     
-    lines.slice(1).forEach(line => {
-        const cols = line.split(',');
-        headers.slice(1).forEach((h, i) => {
-            const val = parseFloat(cols[i+1]);
-            if (!isNaN(val)) data[h].push(val);
-        });
-    });
-    return data;
-}
+    btn.disabled = true;
+    log.innerHTML = "⏳ 正在啟動引擎...";
 
-// 2. 核心運算邏輯 (V10.0)
-function runAnalysis() {
-    if (!rawData.monthly || !rawData.daily) {
-        alert("請先上傳月頻與日頻兩份 CSV 資料！");
-        return;
-    }
+    try {
+        // 1. 抓取 FRED 利率 (DGS2)
+        log.innerHTML += "<br>▶ 正在從 FRED 抓取兩年期美債利率...";
+        const cashRate = await getFredRate(fredKey);
+        log.innerHTML += ` [完成] 當前利率: ${cashRate}%`;
 
-    const shield = parseFloat(document.getElementById('shieldScore').value);
-    const cashRate = parseFloat(document.getElementById('cashRate').value) / 100;
-    const tickers = Object.keys(rawData.monthly);
-    const results = [];
-
-    tickers.forEach(ticker => {
-        const mPrices = rawData.monthly[ticker];
-        const dPrices = rawData.daily[ticker];
-
-        if (mPrices.length < 13 || dPrices.length < 20) return;
-
-        // A. 計算動能 (12m-1m, 6m, 3m)
-        const r12 = (mPrices[mPrices.length-1] / mPrices[mPrices.length-13]) - 1;
-        const r6  = (mPrices[mPrices.length-1] / mPrices[mPrices.length-7]) - 1;
-        const r3  = (mPrices[mPrices.length-1] / mPrices[mPrices.length-4]) - 1;
-
-        // B. 計算近日波動率 (252日日頻)
-        const dailyReturns = [];
-        for(let i=1; i<dPrices.length; i++) {
-            dailyReturns.push(Math.log(dPrices[i] / dPrices[i-1]));
+        // 2. 循環抓取 Yahoo Finance 數據
+        const allStats = [];
+        for (let ticker of tickers) {
+            log.innerHTML += `<br>▶ 正在抓取 ${ticker} 歷史價格...`;
+            const data = await getYahooData(ticker.trim());
+            if (data) {
+                const stats = processV10Logic(ticker, data, cashRate);
+                allStats.push(stats);
+            }
         }
-        const sigma = Math.sqrt(variance(dailyReturns) * 252);
 
-        // C. 計算 Z-Score 與 TS 過濾 (Moskowitz 2012)
-        const z12 = r12 / sigma;
-        const z6  = r6 / sigma;
-        const z3  = r3 / sigma;
-        const score = (0.5 * z12) + (0.3 * z6) + (0.2 * z3);
-        const isTsPass = r12 > (cashRate + 0.005); // 加入 0.5% 緩衝
+        // 3. 執行動能輪動與 Volatility Scaling
+        renderV10Results(allStats);
+        log.innerHTML += "<br>✅ 全自動分析完成！";
 
-        results.push({ ticker, score, sigma, isTsPass, rawWeight: score / sigma });
-    });
-
-    // D. 排序與配重 (Volatility Scaling)
-    const topN = results.filter(r => r.isTsPass).sort((a,b) => b.score - a.score).slice(0, 5);
-    const totalRawWeight = topN.reduce((sum, r) => sum + Math.max(0, r.rawWeight), 0);
-    
-    // E. 盾牌縮放邏輯
-    let exposure = 0;
-    if (shield >= 70) exposure = 1.0;
-    else if (shield >= 30) exposure = (shield - 30) * 0.02;
-
-    // 渲染結果
-    const tbody = document.getElementById('resultBody');
-    tbody.innerHTML = '';
-    topN.forEach(r => {
-        const finalWeight = ((r.rawWeight / totalRawWeight) * exposure * 100).toFixed(2);
-        tbody.innerHTML += `<tr>
-            <td><b>${r.ticker}</b></td>
-            <td>${r.score.toFixed(2)}</td>
-            <td>${(r.sigma * 100).toFixed(2)}%</td>
-            <td>${r.isTsPass ? '✅ 通過' : '❌ 攔截'}</td>
-            <td style="color:var(--teal)">${finalWeight}%</td>
-        </tr>`;
-    });
-    document.getElementById('resultCard').style.display = 'block';
+    } catch (e) {
+        log.innerHTML += `<br>❌ 錯誤: ${e.message}`;
+    } finally {
+        btn.disabled = false;
+    }
 }
 
-function variance(arr) {
+async function getFredRate(key) {
+    const url = `${FRED_BASE}?series_id=DGS2&api_key=${key}&file_type=json&sort_order=desc&limit=1`;
+    const resp = await fetch(url); // 注意：若在本地執行可能會有 CORS 問題，建議在 GAS 執行
+    const json = await resp.json();
+    return parseFloat(json.observations[0].value);
+}
+
+async function getYahooData(ticker) {
+    // 抓取過去一年的日資料 (約 252 筆)
+    const end = Math.floor(Date.now() / 1000);
+    const start = end - (365 * 24 * 60 * 60 * 1.5); // 抓 1.5 年確保夠用
+    const url = `${YH_PROXY}${ticker}?period1=${start}&period2=${end}&interval=1d`;
+    
+    // 實務上建議透過你的後端 Proxy 呼叫，避免被 Yahoo 封鎖
+    const resp = await fetch(url);
+    const json = await resp.json();
+    return json.chart.result[0].indicators.adjclose[0];
+}
+
+function processV10Logic(ticker, prices, cashRate) {
+    // 這裡實作你 V9.5/V10.0 的核心公式
+    // prices 為日頻 adj close 陣列
+    const last = prices.length - 1;
+    
+    // 計算報酬 (12m, 6m, 3m) - 這裡簡化取 252, 126, 63 天
+    const r12 = (prices[last] / prices[last - 252]) - 1;
+    const r6 = (prices[last] / prices[last - 126]) - 1;
+    const r3 = (prices[last] / prices[last - 63]) - 1;
+
+    // 計算 60 日年化波動率
+    const rets = [];
+    for(let i = last - 60; i < last; i++) rets.push(Math.log(prices[i+1]/prices[i]));
+    const sigma = Math.sqrt(calculateVariance(rets) * 252);
+
+    // Z-Score (與自身波動率標定)
+    const score = (0.5 * (r12/sigma)) + (0.3 * (r6/sigma)) + (0.2 * (r3/sigma));
+    
+    return { ticker, score, sigma, r12, isTsPass: r12 > (cashRate/100) };
+}
+
+function calculateVariance(arr) {
     const m = arr.reduce((a, b) => a + b) / arr.length;
     return arr.reduce((a, b) => a + Math.pow(b - m, 2), 0) / (arr.length - 1);
 }
 </script>
-</body>
-</html>
