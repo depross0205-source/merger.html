@@ -1,198 +1,161 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
-<meta charset="UTF-8">
-<title>🛡️ 矛與盾 V10.2 FINAL</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<style>
-body{background:#0a0c10;color:#e2eaf8;font-family:sans-serif;padding:20px}
-.card{background:#12161f;border:1px solid #252d3d;padding:10px;margin-bottom:10px}
-button{padding:8px 12px;font-weight:bold;cursor:pointer}
-</style>
+    <meta charset="UTF-8">
+    <title>Fearless Console V10.0 - Momentum & Volatility Engine</title>
+    <style>
+        :root { --teal: #20c997; --bg: #121212; --surface: #1e1e1e; --text: #e0e0e0; }
+        body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); padding: 20px; }
+        .card { background: var(--surface); border-radius: 8px; padding: 20px; margin-bottom: 20px; border: 1px solid #333; }
+        h2 { color: var(--teal); border-bottom: 1px solid var(--teal); padding-bottom: 10px; }
+        .upload-group { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .file-box { border: 2px dashed #444; padding: 15px; text-align: center; border-radius: 5px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { text-align: left; padding: 12px; border-bottom: 1px solid #333; }
+        th { color: var(--teal); font-size: 12px; text-transform: uppercase; }
+        .btn { background: var(--teal); color: black; border: none; padding: 10px 20px; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .status { font-size: 12px; color: #888; margin-top: 5px; }
+    </style>
 </head>
 <body>
 
-<h2>🛡️ 矛與盾 V10.2 FINAL（實戰版）</h2>
-
 <div class="card">
-<input type="file" id="csv">
-<button onclick="run()">▶ Run Backtest</button>
+    <h2>V10.0 數據上傳中心</h2>
+    <div class="upload-group">
+        <div class="file-box">
+            <div>📈 <b>月頻歷史資料 (CSV)</b></div>
+            <input type="file" id="monthlyFile" accept=".csv" onchange="handleFile('monthly')">
+            <div id="monthlyStatus" class="status">格式：Date, Ticker1, Ticker2...</div>
+        </div>
+        <div class="file-box">
+            <div>⚡ <b>近日 252 日資料 (CSV)</b></div>
+            <input type="file" id="dailyFile" accept=".csv" onchange="handleFile('daily')">
+            <div id="dailyStatus" class="status">用於計算精準波動率 (Sigma)</div>
+        </div>
+    </div>
 </div>
 
-<div class="card" id="metrics"></div>
-<canvas id="nav" height="200"></canvas>
-<canvas id="dd" height="150"></canvas>
+<div class="card">
+    <h2>策略參數設定</h2>
+    <label>市場盾牌分數 (0-100)：</label>
+    <input type="number" id="shieldScore" value="65" style="width: 50px;">
+    <label>現金利率 (%)：</label>
+    <input type="number" id="cashRate" value="4.5" step="0.1" style="width: 50px;">
+    <button class="btn" onclick="runAnalysis()" style="margin-left: 20px;">▶ 執行 V10.0 運算</button>
+</div>
+
+<div class="card" id="resultCard" style="display:none;">
+    <h2>📊 分析結果：建議配置 (Volatility Adjusted)</h2>
+    <table id="resultTable">
+        <thead>
+            <tr>
+                <th>代碼</th><th>綜合 Z-Score</th><th>年化波動率 σ</th><th>TS 狀態</th><th>建議權重</th>
+            </tr>
+        </thead>
+        <tbody id="resultBody"></tbody>
+    </table>
+</div>
 
 <script>
-let DB=[];
+let rawData = { monthly: null, daily: null };
 
-document.getElementById('csv').onchange=e=>{
-  const f=e.target.files[0];
-  const r=new FileReader();
-  r.onload=ev=>{
-    const l=ev.target.result.split('\n').slice(1);
-    DB=l.map(x=>{
-      const c=x.split(',');
-      return {
-        d:new Date(c[0]),
-        sp:+c[1],
-        cape:+c[6],
-        hy:+c[3],
-        y10:+c[7],
-        y2:+c[8],
-        tips:+c[4]
-      }
-    }).filter(x=>x.sp);
-  }
-  r.readAsText(f);
+// 1. 檔案讀取處理
+function handleFile(type) {
+    const file = document.getElementById(type + 'File').files[0];
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        const text = e.target.result;
+        rawData[type] = parseCSV(text);
+        document.getElementById(type + 'Status').innerText = `已載入 ${Object.keys(rawData[type]).length} 個標的`;
+    };
+    reader.readAsText(file);
 }
 
-const lp=(x,x0,x1,y0,y1)=>y0+(y1-y0)*Math.max(0,Math.min(1,(x-x0)/(x1-x0)));
-
-function detectFrequency(){
-  let diffs=[];
-  for(let i=1;i<Math.min(20,DB.length);i++){
-    diffs.push((DB[i].d - DB[i-1].d)/(1000*60*60*24));
-  }
-  const avg=diffs.reduce((a,b)=>a+b,0)/diffs.length;
-
-  if(avg<2) return 252;
-  if(avg<10) return 52;
-  return 12;
+function parseCSV(text) {
+    const lines = text.split('\n').filter(l => l.trim() !== '');
+    const headers = lines[0].split(',').map(h => h.trim());
+    const data = {};
+    headers.slice(1).forEach(h => data[h] = []);
+    
+    lines.slice(1).forEach(line => {
+        const cols = line.split(',');
+        headers.slice(1).forEach((h, i) => {
+            const val = parseFloat(cols[i+1]);
+            if (!isNaN(val)) data[h].push(val);
+        });
+    });
+    return data;
 }
 
-function run(){
+// 2. 核心運算邏輯 (V10.0)
+function runAnalysis() {
+    if (!rawData.monthly || !rawData.daily) {
+        alert("請先上傳月頻與日頻兩份 CSV 資料！");
+        return;
+    }
 
-let eqA=100000, bh=100000;
-let modeA='N', prevMode='N';
+    const shield = parseFloat(document.getElementById('shieldScore').value);
+    const cashRate = parseFloat(document.getElementById('cashRate').value) / 100;
+    const tickers = Object.keys(rawData.monthly);
+    const results = [];
 
-let curve=[], ddSeries=[], returns=[];
+    tickers.forEach(ticker => {
+        const mPrices = rawData.monthly[ticker];
+        const dPrices = rawData.daily[ticker];
 
-let peakA=eqA, peakBH=bh;
+        if (mPrices.length < 13 || dPrices.length < 20) return;
 
-const freq = detectFrequency();
+        // A. 計算動能 (12m-1m, 6m, 3m)
+        const r12 = (mPrices[mPrices.length-1] / mPrices[mPrices.length-13]) - 1;
+        const r6  = (mPrices[mPrices.length-1] / mPrices[mPrices.length-7]) - 1;
+        const r3  = (mPrices[mPrices.length-1] / mPrices[mPrices.length-4]) - 1;
 
-// ===== Frequency-based parameters =====
-const crashThreshold =
-  freq===252 ? -0.025 :
-  freq===52 ? -0.05 :
-  -0.10;
+        // B. 計算近日波動率 (252日日頻)
+        const dailyReturns = [];
+        for(let i=1; i<dPrices.length; i++) {
+            dailyReturns.push(Math.log(dPrices[i] / dPrices[i-1]));
+        }
+        const sigma = Math.sqrt(variance(dailyReturns) * 252);
 
-const leveragePlus =
-  freq===12 ? 1.2 :
-  1.5;
+        // C. 計算 Z-Score 與 TS 過濾 (Moskowitz 2012)
+        const z12 = r12 / sigma;
+        const z6  = r6 / sigma;
+        const z3  = r3 / sigma;
+        const score = (0.5 * z12) + (0.3 * z6) + (0.2 * z3);
+        const isTsPass = r12 > (cashRate + 0.005); // 加入 0.5% 緩衝
 
-const tradeCost = 0.002; // 0.2%
+        results.push({ ticker, score, sigma, isTsPass, rawWeight: score / sigma });
+    });
 
-for(let i=1;i<DB.length;i++){
+    // D. 排序與配重 (Volatility Scaling)
+    const topN = results.filter(r => r.isTsPass).sort((a,b) => b.score - a.score).slice(0, 5);
+    const totalRawWeight = topN.reduce((sum, r) => sum + Math.max(0, r.rawWeight), 0);
+    
+    // E. 盾牌縮放邏輯
+    let exposure = 0;
+    if (shield >= 70) exposure = 1.0;
+    else if (shield >= 30) exposure = (shield - 30) * 0.02;
 
-  const r=(DB[i].sp-DB[i-1].sp)/DB[i-1].sp;
-  returns.push(r);
-
-  // ===== Score =====
-  const fVal=lp(100/DB[i].cape-DB[i].tips,0,4,10,100);
-  const fCredit=lp(DB[i].hy*100,250,600,80,20);
-  const yc=DB[i].y10-DB[i].y2;
-  const fCurve=lp(yc,-1,2,20,100);
-
-  const score=0.35*fVal+0.35*fCredit+0.3*fCurve;
-
-  // ===== Crash trigger =====
-  let force = r < crashThreshold;
-
-  // ===== Decide FIRST =====
-  let newA = score>=60?'P':score>=40?'N':'C';
-  if(force) newA='C';
-
-  modeA=newA;
-
-  // ===== Exposure =====
-  const expA =
-    modeA==='P'? leveragePlus :
-    modeA==='N'? 1 :
-    0;
-
-  // ===== Transaction Cost =====
-  if(modeA !== prevMode){
-    eqA *= (1 - tradeCost);
-  }
-  prevMode = modeA;
-
-  // ===== Apply Return =====
-  eqA *= (1 + expA*r);
-  bh *= (1 + r);
-
-  // ===== Drawdown =====
-  peakA = Math.max(peakA, eqA);
-  peakBH = Math.max(peakBH, bh);
-
-  ddSeries.push({
-    A:(eqA/peakA-1),
-    BH:(bh/peakBH-1)
-  });
-
-  curve.push({d:DB[i].d,A:eqA,BH:bh});
+    // 渲染結果
+    const tbody = document.getElementById('resultBody');
+    tbody.innerHTML = '';
+    topN.forEach(r => {
+        const finalWeight = ((r.rawWeight / totalRawWeight) * exposure * 100).toFixed(2);
+        tbody.innerHTML += `<tr>
+            <td><b>${r.ticker}</b></td>
+            <td>${r.score.toFixed(2)}</td>
+            <td>${(r.sigma * 100).toFixed(2)}%</td>
+            <td>${r.isTsPass ? '✅ 通過' : '❌ 攔截'}</td>
+            <td style="color:var(--teal)">${finalWeight}%</td>
+        </tr>`;
+    });
+    document.getElementById('resultCard').style.display = 'block';
 }
 
-// ===== Metrics =====
-function calcMetrics(series, returns){
-
-  const years = series.length / freq;
-
-  const start=series[0], end=series[series.length-1];
-  const cagr=Math.pow(end/start,1/years)-1;
-
-  let peak=series[0], maxDD=0;
-  for(let v of series){
-    peak=Math.max(peak,v);
-    maxDD=Math.min(maxDD,(v/peak-1));
-  }
-
-  const avg = returns.reduce((a,b)=>a+b,0)/returns.length;
-  const std = Math.sqrt(returns.map(x=>(x-avg)**2).reduce((a,b)=>a+b)/returns.length);
-
-  const sharpe = (avg*freq) / (std*Math.sqrt(freq));
-
-  return {cagr,maxDD,sharpe};
-}
-
-const mA=calcMetrics(curve.map(x=>x.A), returns);
-const mBH=calcMetrics(curve.map(x=>x.BH), returns);
-
-document.getElementById('metrics').innerHTML=`
-📊 Frequency: ${freq===252?'Daily':freq===52?'Weekly':'Monthly'}<br><br>
-🟡 A CAGR: ${(mA.cagr*100).toFixed(1)}%<br>
-🟡 A MaxDD: ${(mA.maxDD*100).toFixed(1)}%<br>
-🟡 A Sharpe: ${mA.sharpe.toFixed(2)}<br><br>
-⚫ BH CAGR: ${(mBH.cagr*100).toFixed(1)}%<br>
-⚫ BH MaxDD: ${(mBH.maxDD*100).toFixed(1)}%
-`;
-
-// ===== Chart =====
-new Chart(nav.getContext('2d'),{
-  type:'line',
-  data:{
-    labels:curve.map(x=>x.d.toISOString().slice(0,10)),
-    datasets:[
-      {label:'Strategy',data:curve.map(x=>x.A)},
-      {label:'B&H',data:curve.map(x=>x.BH)}
-    ]
-  }
-});
-
-new Chart(dd.getContext('2d'),{
-  type:'line',
-  data:{
-    labels:curve.map(x=>x.d.toISOString().slice(0,10)),
-    datasets:[
-      {label:'A DD',data:ddSeries.map(x=>x.A)},
-      {label:'BH DD',data:ddSeries.map(x=>x.BH)}
-    ]
-  }
-});
-
+function variance(arr) {
+    const m = arr.reduce((a, b) => a + b) / arr.length;
+    return arr.reduce((a, b) => a + Math.pow(b - m, 2), 0) / (arr.length - 1);
 }
 </script>
-
 </body>
 </html>
