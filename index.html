@@ -190,9 +190,14 @@ td{padding:8px;border-bottom:1px solid var(--border)}
 <div class="step-block">
   <div class="step-header"><span class="step-num sn1">1</span><div><div class="step-title">上傳歷史資料庫 CSV</div><div class="step-sub">DATE/SP500/SP500EW/VIX/HY_SPREAD/TIPS_10Y/DGS10/DGS2/CAPE</div></div></div>
   <div class="step-body">
-    <label for="csvUpload" style="display:block;width:100%;padding:12px;background:var(--surface2);border:2px dashed var(--border-hi);color:var(--accent);font-weight:700;border-radius:3px;margin-bottom:8px;cursor:pointer;text-align:center;box-sizing:border-box">📂 點擊選擇 Shield_Database.csv</label>
-    <input type="file" id="csvUpload" accept=".csv" onchange="loadCSV(event)" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden">
+    <input type="file" id="csvUpload" accept=".csv" style="position:absolute;left:-9999px;opacity:0;width:1px;height:1px" onchange="loadCSV(event)">
+    <button onclick="document.getElementById('csvUpload').click()" class="upload-label" style="width:100%;border:2px dashed var(--border-hi)">📂 點擊選擇 CSV 檔案</button>
     <div id="csvStatus" style="font-size:12px;color:var(--green);min-height:16px;margin-bottom:8px"></div>
+    <div style="margin-top:4px">
+      <div style="font-size:11px;color:var(--muted);margin-bottom:4px">📋 備用：直接貼上 CSV 文字內容（iOS 若無法選擇檔案請用此方式）</div>
+      <textarea id="csvPasteArea" rows="4" placeholder="貼上 CSV 內容到這裡，第一行須為標題列（DATE,SP500,...）" style="width:100%;background:var(--bg);border:1px solid var(--border-hi);color:var(--white);padding:8px;border-radius:3px;font-size:11px;font-family:monospace;resize:vertical"></textarea>
+      <button onclick="loadCSVFromPaste()" style="margin-top:4px;width:100%;padding:8px;background:var(--surface2);border:1px solid var(--border-hi);color:var(--accent);border-radius:3px;font-size:12px;font-weight:700;cursor:pointer">📋 從貼上內容載入</button>
+    </div>
     <div class="stat-row">
       <div class="stat-box"><div class="n" id="dbCount">0 筆</div><div class="s">記憶體資料庫</div></div>
       <div class="stat-box"><div class="n" id="dbRange" style="font-size:13px">--</div><div class="s">資料區間</div></div>
@@ -208,8 +213,8 @@ td{padding:8px;border-bottom:1px solid var(--border)}
     </div>
     <div style="margin-top:8px;padding:8px 10px;background:var(--surface2);border:1px solid var(--border);border-radius:3px">
       <div style="font-size:11px;color:var(--teal);font-weight:700;margin-bottom:6px">📎 CAPE 上傳 / 手動輸入</div>
-      <label for="capeUpload" style="display:block;width:100%;padding:7px;background:var(--teal-dim);border:1px solid var(--teal);color:var(--teal);border-radius:3px;font-size:12px;font-weight:700;cursor:pointer;margin-bottom:6px;text-align:center">📂 選擇 CAPE CSV</label>
-      <input type="file" id="capeUpload" accept=".csv,.txt" onchange="loadCapeCSV(event)" style="position:absolute;width:1px;height:1px;opacity:0;overflow:hidden">
+      <input type="file" id="capeUpload" accept=".csv,.txt" style="position:absolute;left:-9999px;opacity:0;width:1px;height:1px" onchange="loadCapeCSV(event)">
+      <button onclick="document.getElementById('capeUpload').click()" style="width:100%;padding:10px;background:var(--teal-dim);border:1px solid var(--teal);color:var(--teal);border-radius:4px;font-size:13px;font-weight:700;cursor:pointer;margin-bottom:8px">📂 選擇 CAPE CSV 檔案</button>
       <div style="display:flex;align-items:center;gap:8px">
         <span style="font-size:11px;color:var(--muted);white-space:nowrap">手動輸入當月</span>
         <input type="number" id="apiCape" value="" step="0.1" placeholder="36.5" style="width:90px;font-size:12px">
@@ -218,8 +223,7 @@ td{padding:8px;border-bottom:1px solid var(--border)}
       <div id="capeUploadStatus" style="font-size:11px;color:var(--green);margin-top:6px;min-height:14px;font-family:monospace"></div>
     </div>
     <div id="fetchLog"></div>
-    <button onclick="testNetwork()" style="margin-top:8px;width:100%;padding:8px;background:transparent;border:1px solid var(--border-hi);color:var(--muted);border-radius:3px;font-size:11px;cursor:pointer;font-family:monospace">🔍 測試網路連線（診斷 Proxy）</button>
-    <div id="netTestResult" style="font-size:11px;color:var(--muted);font-family:monospace;margin-top:4px;min-height:14px;white-space:pre-wrap"></div>
+
   </div>
 </div>
 <div class="step-block">
