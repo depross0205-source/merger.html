@@ -1,183 +1,175 @@
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fearless Console V10.5 - Multi-Proxy Engine</title>
-    <style>
-        :root {
-            --teal: #00d4aa; --teal-dim: rgba(0, 212, 170, 0.1);
-            --bg: #0a0c10; --surface: #12161f; --border: #252d3d;
-            --text: #e2eaf8; --muted: #6b7a99; --accent: #7eb8ff;
-        }
-        body { font-family: sans-serif; background: var(--bg); color: var(--text); padding: 20px; line-height: 1.6; }
-        .panel { max-width: 900px; margin: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 25px; }
-        .hdr-title { font-size: 22px; font-weight: 900; color: #fff; margin-bottom: 20px; border-bottom: 2px solid var(--teal); padding-bottom: 10px; }
-        .cfg-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px; margin-bottom: 20px; }
-        .cfg-box { border: 1px solid var(--border); padding: 15px; border-radius: 5px; background: rgba(0,0,0,0.2); }
-        .cfg-label { font-size: 11px; color: var(--teal); font-weight: 700; text-transform: uppercase; margin-bottom: 10px; display: block; }
-        .input-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 13px; }
-        input { background: var(--bg); border: 1px solid var(--border); color: var(--accent); padding: 5px 10px; border-radius: 4px; width: 80px; font-family: monospace; }
-        .btn-teal { background: var(--teal); color: #000; border: none; padding: 15px; border-radius: 4px; font-weight: 700; cursor: pointer; width: 100%; font-size: 16px; transition: 0.2s; }
-        .btn-teal:hover { opacity: 0.8; }
-        #fetchLog { font-size: 12px; color: var(--muted); font-family: monospace; margin-top: 15px; background: #000; padding: 12px; border-radius: 4px; min-height: 100px; overflow-y: auto; }
-        table { width: 100%; border-collapse: collapse; margin-top: 25px; }
-        th { text-align: left; font-size: 11px; color: var(--muted); padding: 10px; border-bottom: 2px solid var(--border); }
-        td { padding: 12px 10px; border-bottom: 1px solid var(--border); font-size: 14px; }
-        .z-val { color: var(--accent); font-weight: 700; }
-        .pass { color: var(--teal); font-weight: 700; }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Fearless Console V10.5 - 0326 結構修正版</title>
+<style>
+  :root {
+    --bg:#0a0c10; --surface:#12161f; --border:#252d3d; --border-hi:#3a4560;
+    --text:#e2eaf8; --muted:#6b7a99; --accent:#7eb8ff; --teal:#00d4aa; --red:#ff4d6d;
+  }
+  body { font-family: sans-serif; background: var(--bg); color: var(--text); padding: 20px; font-size: 14px; }
+  .wrap { max-width: 900px; margin: 0 auto; }
+  .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px; }
+  .title { font-size: 18px; font-weight: 900; color: #fff; margin-bottom: 20px; border-bottom: 2px solid var(--teal); padding-bottom: 10px; }
+  .cfg-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .cfg-box { border: 1px solid var(--border); padding: 15px; border-radius: 4px; background: rgba(0,0,0,0.2); }
+  .label { font-size: 11px; color: var(--teal); font-weight: 700; text-transform: uppercase; margin-bottom: 10px; display: block; }
+  .row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  input { background: #000; border: 1px solid var(--border-hi); color: var(--accent); padding: 5px 8px; border-radius: 3px; width: 70px; font-family: monospace; }
+  button { background: var(--teal); color: #000; border: none; padding: 12px; border-radius: 4px; font-weight: 700; cursor: pointer; width: 100%; font-size: 15px; }
+  #fetchLog { font-size: 11px; color: var(--muted); font-family: monospace; margin-top: 15px; background: #000; padding: 10px; border-radius: 4px; min-height: 120px; overflow-y: auto; border: 1px solid var(--border); }
+  table { width: 100%; border-collapse: collapse; margin-top: 20px; font-size: 13px; }
+  th { text-align: left; color: var(--muted); padding: 10px; border-bottom: 2px solid var(--border); }
+  td { padding: 12px 10px; border-bottom: 1px solid var(--border); }
+</style>
 </head>
 <body>
 
-<div class="panel">
-    <div class="hdr-title">🛡️ V10.5 自動化動能策劃中心</div>
-
+<div class="wrap">
+  <div class="panel">
+    <div class="title">📡 V10.5 動能策劃 (0326 穩定擷取版)</div>
+    
     <div class="cfg-grid">
-        <div class="cfg-box">
-            <span class="cfg-label">動能與風險設定</span>
-            <div class="input-row"><span>現金緩衝 (%)</span><input type="number" id="momBuffer" value="0.5" step="0.1"></div>
-            <div class="input-row"><span>盾牌分數 (0-100)</span><input type="number" id="shieldScore" value="65"></div>
-            <div class="input-row"><span>最大持倉數</span><input type="number" id="momMaxHold" value="5"></div>
-        </div>
-        <div class="cfg-box">
-            <span class="cfg-label">資產池 (Ticker)</span>
-            <input type="text" id="tickerList" value="VOO,VTV,QQQ,IWM,VEA,VWO,GLD" style="width:100%; margin-bottom:10px;">
-            <div style="font-size:10px; color:var(--muted)">預設採用 0326 修正版代理輪詢機制</div>
-        </div>
+      <div class="cfg-box">
+        <span class="label">動能與風險參數</span>
+        <div class="row"><span>現金緩衝 (%)</span><input type="number" id="momBuffer" value="0.5" step="0.1"></div>
+        <div class="row"><span>盾牌分數 (0-100)</span><input type="number" id="shieldScore" value="65"></div>
+        <div class="row"><span>最大持股數</span><input type="number" id="momMaxHold" value="5"></div>
+      </div>
+      <div class="cfg-box">
+        <span class="label">資產清單與代理</span>
+        <input type="text" id="tickerList" value="VOO,VTV,QQQ,IWM,VEA,VWO,GLD" style="width:100%; margin-bottom:10px;">
+        <div style="font-size:10px; color:var(--muted)">採用多重代理輪詢機制 (Failover)</div>
+      </div>
     </div>
 
-    <button class="btn-teal" id="runBtn" onclick="runEngine()">🌐 啟動全自動擷取與運算</button>
-    <div id="fetchLog">等待指令...</div>
+    <button onclick="runEngine()">🌐 啟動全自動擷取與 V10.0 計算</button>
+    <div id="fetchLog">系統就緒...</div>
 
     <div id="resultSection" style="display:none;">
-        <table>
-            <thead><tr><th>代碼</th><th>Z-Score</th><th>σ (波動率)</th><th>TS 狀態</th><th style="text-align:right">權重 (%)</th></tr></thead>
-            <tbody id="resultBody"></tbody>
-        </table>
+      <table>
+        <thead><tr><th>代碼</th><th>Z-Score</th><th>σ (波動率)</th><th>狀態</th><th style="text-align:right">權重</th></tr></thead>
+        <tbody id="resultBody"></tbody>
+      </table>
     </div>
+  </div>
 </div>
 
 <script>
-/** ════ 核心參數設定 ════ **/
-const FRED_KEY = "258bf0113f3cc4ec207f3160731c459e"; //
-const USER_PROXY = "https://shield-proxy.depross0205.workers.dev?url="; //
+/** ════ 預設配置 (參照 0326 修正版) ════ **/
+[span_3](start_span)const FRED_KEY = "258bf0113f3cc4ec207f3160731c459e";[span_3](end_span)
+[span_4](start_span)const MAIN_PROXY = "https://shield-proxy.depross0205.workers.dev?url=";[span_4](end_span)
 
-// 仿效 0326 修正版：建立代理清單
+[span_5](start_span)// 仿效 0326 buildProxies 邏輯[span_5](end_span)
 function buildProxies() {
-    return [
-        USER_PROXY,
-        'https://api.allorigins.win/raw?url=',
-        'https://api.codetabs.com/v1/proxy?quest='
-    ].filter(Boolean); //
+  return [
+    MAIN_PROXY,
+    'https://api.allorigins.win/raw?url=',
+    'https://api.codetabs.com/v1/proxy?quest='
+  ].filter(Boolean);
 }
 
-// 核心擷取工具：具備自動輪詢機制
+[span_6](start_span)// 仿效 0326 fetchFB 輪詢邏輯[span_6](end_span)
 async function fetchFB(url, proxies) {
-    let lastErr;
-    for (let i = 0; i < proxies.length; i++) {
-        let p = proxies[i];
-        try {
-            logUpdate(`嘗試代理 [${i+1}/${proxies.length}] 連線...`);
-            let res = await fetch(p + encodeURIComponent(url)); //
-            if (!res.ok) throw new Error('HTTP ' + res.status); //
-            return res; // 成功即回傳
-        } catch (e) {
-            lastErr = e;
-            logUpdate(`⚠️ 代理 ${i+1} 失敗: ${e.message}`);
-        }
-    }
-    throw lastErr || new Error('所有 Proxy 皆連線失敗'); //
+  let lastErr;
+  for (let i = 0; i < proxies.length; i++) {
+    try {
+      let res = await fetch(proxies[i] + encodeURIComponent(url));
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res;
+    } catch (e) { lastErr = e; }
+  }
+  throw lastErr || new Error('所有 Proxy 皆失敗');
 }
 
 async function runEngine() {
-    const logEl = document.getElementById('fetchLog');
-    const tickers = document.getElementById('tickerList').value.split(',').map(t => t.trim());
-    const shield = parseFloat(document.getElementById('shieldScore').value);
-    const buffer = parseFloat(document.getElementById('momBuffer').value) / 100;
-    const proxies = buildProxies(); //
+  const log = document.getElementById('fetchLog');
+  const tickers = document.getElementById('tickerList').value.split(',').map(t => t.trim());
+  const shield = parseFloat(document.getElementById('shieldScore').value);
+  const buffer = parseFloat(document.getElementById('momBuffer').value) / 100;
+  const proxies = buildProxies();
 
-    logEl.innerHTML = "🚀 [1/3] 正在同步 FRED 無風險利率...";
-    
-    try {
-        // 1. 抓取 FRED 利率
-        const fredUrl = `https://api.stlouisfed.org/fred/series/observations?series_id=DGS2&api_key=${FRED_KEY}&file_type=json&sort_order=desc&limit=1`;
-        const fredRes = await fetchFB(fredUrl, proxies);
-        const fredData = await fredRes.json();
-        const cashRate = parseFloat(fredData.observations[0].value) / 100; //
-        logUpdate(`✅ 利率同步成功: ${(cashRate * 100).toFixed(2)}%`);
+  log.innerHTML = "🚀 [1/3] 正在同步 FRED 利率...";
+  
+  try {
+    [span_7](start_span)// 1. 抓取 FRED 數據[span_7](end_span)
+    const fredUrl = `https://api.stlouisfed.org/fred/series/observations?series_id=DGS2&api_key=${FRED_KEY}&file_type=json&sort_order=desc&limit=1`;
+    const fredRes = await fetchFB(fredUrl, proxies);
+    const fredData = await fredRes.json();
+    const cashRate = parseFloat(fredData.observations[0].value) / 100;
+    logUpdate(`✅ 利率同步完成: ${(cashRate * 100).toFixed(2)}%`);
 
-        // 2. 抓取 Yahoo 數據
-        logUpdate("🚀 [2/3] 開始擷取 Yahoo 歷史股價 (252D)...");
-        const allStats = [];
-        const endTs = Math.floor(Date.now() / 1000);
-        const startTs = endTs - (400 * 24 * 60 * 60);
+    [span_8](start_span)// 2. 抓取 Yahoo 數據 (日頻 252D)[span_8](end_span)
+    logUpdate("🚀 [2/3] 正在擷取 Yahoo 歷史價格並解析結構...");
+    const allStats = [];
+    const end = Math.floor(Date.now() / 1000);
+    const start = end - (400 * 24 * 60 * 60);
 
-        for (let ticker of tickers) {
-            try {
-                const yhUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?period1=${startTs}&period2=${endTs}&interval=1d`; //
-                const yhRes = await fetchFB(yhUrl, proxies);
-                const yhJson = await yhRes.json();
-                const prices = yhJson.chart.result[0].indicators.adjclose[0].filter(p => p !== null); //
+    for (let ticker of tickers) {
+      try {
+        const yhUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?period1=${start}&period2=${end}&interval=1d`;
+        const res = await fetchFB(yhUrl, proxies);
+        const j = await res.json();
+        
+        [span_9](start_span)// 修正後的解析路徑： indicators.adjclose[0].adjclose[span_9](end_span)
+        const indicators = j.chart.result[0].indicators;
+        const prices = (indicators.adjclose && indicators.adjclose[0].adjclose) 
+                       ? indicators.adjclose[0].adjclose.filter(p => p !== null) 
+                       : indicators.quote[0].close.filter(p => p !== null);
 
-                if (prices.length >= 252) {
-                    const stats = calculateV10(ticker, prices, cashRate, buffer);
-                    allStats.push(stats);
-                    logUpdate(`📊 ${ticker} 已完成運算`);
-                }
-            } catch (err) {
-                logUpdate(`❌ ${ticker} 擷取失敗: ${err.message}`);
-            }
+        if (prices.length >= 252) {
+          const stats = calculateV10(ticker, prices, cashRate, buffer);
+          allStats.push(stats);
+          logUpdate(`📊 ${ticker} 運算成功`);
         }
-
-        // 3. 執行權重分配
-        logUpdate("🚀 [3/3] 執行 Volatility Scaling 權重分配...");
-        renderResults(allStats, shield);
-
-    } catch (criticalErr) {
-        logUpdate(`🚨 系統錯誤: ${criticalErr.message}`);
+      } catch (e) { logUpdate(`❌ ${ticker} 失敗: ${e.message}`); }
     }
+
+    // 3. 輸出結果
+    renderV10(allStats, shield);
+    logUpdate("🏆 分析完成。");
+
+  } catch (err) { logUpdate(`🚨 核心錯誤: ${err.message}`); }
 }
 
 function calculateV10(ticker, prices, cashRate, buffer) {
-    const last = prices.length - 1;
-    // 採用 12-1 月動能邏輯
-    const r12 = (prices[last - 21] / prices[last - 252]) - 1;
-    const r6 = (prices[last - 21] / prices[last - 126]) - 1;
-    const r3 = (prices[last - 21] / prices[last - 63]) - 1;
+  const last = prices.length - 1;
+  [span_10](start_span)// 12-1 月動能 (扣除最近一月 21 交易日)[span_10](end_span)
+  const r12 = (prices[last - 21] / prices[last - 252]) - 1;
+  const r6  = (prices[last - 21] / prices[last - 126]) - 1;
+  const r3  = (prices[last - 21] / prices[last - 63]) - 1;
 
-    // 60 日年化波動率
-    const rets = [];
-    for (let i = last - 60; i < last; i++) rets.push(Math.log(prices[i+1] / prices[i]));
-    const sigma = Math.sqrt(rets.reduce((a, b) => a + b*b, 0) / (rets.length - 1) * 252); //
+  [span_11](start_span)// 計算 60 日年化波動率[span_11](end_span)
+  const rets = [];
+  for (let i = last - 60; i < last; i++) rets.push(Math.log(prices[i+1] / prices[i]));
+  const sigma = Math.sqrt(rets.reduce((a, b) => a + b*b, 0) / (rets.length - 1) * 252);
 
-    const z12 = r12 / sigma, z6 = r6 / sigma, z3 = r3 / sigma;
-    const score = (0.5 * z12) + (0.3 * z6) + (0.2 * z3); //
-
-    return { ticker, score, sigma, r12, isTsPass: r12 > (cashRate + buffer), rawWeight: score / sigma }; //
+  const score = (0.5 * (r12/sigma)) + (0.3 * (r6/sigma)) + (0.2 * (r3/sigma));
+  return { ticker, score, sigma, r12, isTsPass: r12 > (cashRate + buffer), rawW: score/sigma };
 }
 
-function renderResults(stats, shield) {
-    const maxHold = parseInt(document.getElementById('momMaxHold').value);
-    const winners = stats.filter(s => s.isTsPass && s.score > 0).sort((a,b) => b.score - a.score).slice(0, maxHold); //
-    
-    // 盾牌縮放 (Shield Gating)
-    let exp = shield >= 70 ? 1 : shield >= 50 ? (shield-50)*0.02 + 0.4 : shield >= 30 ? (shield-30)*0.02 : 0;
-    const totalRaw = winners.reduce((sum, s) => sum + s.rawWeight, 0);
+function renderV10(stats, shield) {
+  const maxHold = parseInt(document.getElementById('momMaxHold').value);
+  const winners = stats.filter(s => s.isTsPass && s.score > 0).sort((a,b) => b.score - a.score).slice(0, maxHold);
+  
+  [span_12](start_span)// 盾牌縮放 (Shield Exposure)[span_12](end_span)
+  let exp = shield >= 70 ? 1 : shield >= 50 ? (shield-50)*0.02 + 0.4 : shield >= 30 ? (shield-30)*0.02 : 0;
+  const totalW = winners.reduce((sum, s) => sum + s.rawW, 0);
 
-    const body = document.getElementById('resultBody');
-    body.innerHTML = '';
-    winners.forEach(s => {
-        const weight = (s.rawWeight / totalRaw) * exp * 100;
-        body.innerHTML += `<tr><td style="font-weight:700">${s.ticker}</td><td class="z-val">${s.score.toFixed(2)}</td><td>${(s.sigma*100).toFixed(1)}%</td><td class="pass">PASS</td><td style="text-align:right; font-weight:700; color:var(--teal)">${weight.toFixed(1)}%</td></tr>`;
-    });
-    document.getElementById('resultSection').style.display = winners.length ? 'block' : 'none';
+  const body = document.getElementById('resultBody');
+  body.innerHTML = winners.map(s => {
+    const w = (s.rawW / totalW) * exp * 100;
+    return `<tr><td style="font-weight:700">${s.ticker}</td><td style="color:var(--accent)">${s.score.toFixed(2)}</td><td>${(s.sigma*100).toFixed(1)}%</td><td style="color:var(--teal)">PASS</td><td style="text-align:right;font-weight:700;color:var(--teal)">${w.toFixed(1)}%</td></tr>`;
+  }).join('');
+  document.getElementById('resultSection').style.display = winners.length ? 'block' : 'none';
 }
 
 function logUpdate(msg) {
-    const logEl = document.getElementById('fetchLog');
-    logEl.innerHTML += `<br>[${new Date().toLocaleTimeString()}] ${msg}`;
-    logEl.scrollTop = logEl.scrollHeight;
+  const el = document.getElementById('fetchLog');
+  el.innerHTML += `<div>[${new Date().toLocaleTimeString()}] ${msg}</div>`;
+  el.scrollTop = el.scrollHeight;
 }
 </script>
 </body>
