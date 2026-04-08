@@ -1441,17 +1441,30 @@ function initGroupToggles() {
 }
 
 // ==================== 修正後的 fetchAll ====================
+// ==================== 抓取全部（含進度條） ====================
 async function fetchAll() {
-  showL('正在抓取全部資料，請耐心等待...');
-  sl('fetchLog', '開始抓取 Yahoo Finance...', true);
-
   const stocks = getEnabledStocks();
-  const proxy = ($('proxyUrl') && $('proxyUrl').value.trim()) || 
-                'https://shield-proxy.depross0205.workers.dev?url=';
+  if (!stocks.length) {
+    alert('請先在股池選擇標的');
+    return;
+  }
 
-  let success = 0, failed = [];
+  showL('準備抓取資料...');
+  $('fetchProg').classList.remove('hidden');
+  $('fetchFill').style.width = '0%';
 
-  for (let s of stocks) {
+  const proxy = $('proxyUrl').value.trim() || 'https://shield-proxy.depross0205.workers.dev?url=';
+  let success = 0;
+  let total = stocks.length;
+
+  sl('fetchLog', `開始抓取 ${total} 檔股票...`, true);
+
+  for (let i = 0; i < stocks.length; i++) {
+    const s = stocks[i];
+    const progress = Math.round(((i + 1) / total) * 100);
+    $('fetchFill').style.width = progress + '%';
+    $('loadTxt').textContent = `抓取中... ${s.c} (${i+1}/${total})`;
+
     try {
       let url = proxy + encodeURIComponent(
         `https://query1.finance.yahoo.com/v8/finance/chart/${s.c}?interval=1d&range=5y`
@@ -1464,28 +1477,29 @@ async function fetchAll() {
         let ts = r.timestamp;
         let q = r.indicators.quote[0];
         let daily = [];
-        for (let i = 0; i < ts.length; i++) {
-          if (q.close[i] != null) {
+
+        for (let j = 0; j < ts.length; j++) {
+          if (q.close[j] != null) {
             daily.push({
-              date: new Date(ts[i] * 1000).toISOString().slice(0,10),
-              o: q.open[i], h: q.high[i], l: q.low[i], c: q.close[i], v: q.volume[i] || 0
+              date: new Date(ts[j] * 1000).toISOString().slice(0,10),
+              o: q.open[j], h: q.high[j], l: q.low[j], c: q.close[j], v: q.volume[j] || 0
             });
           }
         }
         DAILY[s.c] = daily;
         success++;
-        sl('fetchLog', `✅ ${s.c} (${success}/${stocks.length})`, true);
-      } else {
-        failed.push(s.c);
+        sl('fetchLog', `✅ ${s.c} (${success}/${total})`, true);
       }
     } catch (e) {
-      failed.push(s.c);
       console.error(s.c, e);
+      sl('fetchLog', `⚠️ ${s.c} 抓取失敗`, false);
     }
-    await new Promise(r => setTimeout(r, 600)); // 避免被封鎖
+
+    await new Promise(r => setTimeout(r, 650)); // 避免被封鎖
   }
 
   // 抓基準指數
+  $('loadTxt').textContent = '抓取基準指數...';
   try {
     let tnxUrl = proxy + encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/%5ETNX?interval=1mo&range=10y');
     let tnxJson = await (await fetch(tnxUrl)).json();
@@ -1498,14 +1512,15 @@ async function fetchAll() {
     console.warn('基準指數抓取失敗', e);
   }
 
+  $('fetchProg').classList.add('hidden');
   hideL();
 
-  if (success > 5) {
+  if (success > 0) {
     await buildCache();
-    sl('fetchLog', `✅ 抓取完成！成功 ${success} 檔，失敗 ${failed.length} 檔`, true);
+    sl('fetchLog', `🎉 抓取完成！成功 ${success}/${total} 檔`, true);
     updCacheSt();
   } else {
-    sl('fetchLog', `⚠️ 只成功 ${success} 檔，請檢查 Proxy`, false);
+    sl('fetchLog', '❌ 全部抓取失敗，請檢查 Proxy', false);
   }
 }
 
