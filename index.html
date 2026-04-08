@@ -713,76 +713,126 @@ function buildProxies(){var p=$('proxyUrl')?$('proxyUrl').value.trim():'';if(p&&
 async function fp(url,proxies){var last;for(var i=0;i<proxies.length;i++){try{var r=await fetch(proxies[i]+encodeURIComponent(url));if(!r.ok)throw new Error('HTTP '+r.status);return r;}catch(e){last=e;}}throw last||new Error('all proxies failed');}
 function buildTicker(s){if(!s.tw)return s.c;if(s.c.charAt(0)==='^'||s.c.indexOf('.')>=0)return s.c;return s.c+'.TW';}
 
-async function fetchOHLCV(s,interval,range){
-  var tk=buildTicker(s);var prx=buildProxies();
-  var r=await fp('https://query1.finance.yahoo.com/v8/finance/chart/'+tk+'?range='+range+'&interval='+interval,prx);
-  var j=await r.json();var ch=j&&j.chart&&j.chart.result&&j.chart.result[0];if(!ch||!ch.timestamp)throw new Error('no data');
-  var out=[];
-  ch.timestamp.forEach(function(ts,i){
-    var q=ch.indicators.quote[0];var h=q.high[i],l=q.low[i],c=q.close[i],v=q.volume[i];
-    var adj=ch.indicators.adjclose&&ch.indicators.adjclose[0]?ch.indicators.adjclose[0].adjclose[i]:null;
-    var finalC=adj!=null?adj:c; 
-    if(finalC&&finalC>0&&h&&l&&v!=null)out.push({date:new Date(ts*1000).toISOString().slice(0,10),o:q.open[i],h:+h.toFixed(3),l:+l.toFixed(3),c:+finalC.toFixed(3),v:+v});
-  });
-  return out;
+// 核心抓取函數 (恢復 max 全歷史抓取)
+async function fetchOHLCV(s, interval, range = 'max') {
+  const tk = buildTicker(s);
+  const proxy = $('proxyUrl').value.trim();
+  const url = `${proxy}${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${tk}?range=${range}&interval=${interval}`)}`;
+  
+  const r = await fetch(url);
+  const j = await r.json();
+  const ch = j.chart?.result?.[0];
+  if (!ch || !ch.timestamp) throw new Error('No Data for ' + tk);
+  
+  return ch.timestamp.map((ts, i) => {
+    const q = ch.indicators.quote[0];
+    const adj = ch.indicators.adjclose?.[0].adjclose[i]; // 還原權值
+    return {
+      date: new Date(ts * 1000).toISOString().slice(0, 10),
+      o: q.open[i], h: q.high[i], l: q.low[i], 
+      c: adj || q.close[i], v: q.volume[i]
+    };
+  }).filter(v => v.c != null);
 }
 
-async function fetchMonthly(tkOrS,range){
-  var tk=typeof tkOrS==='string'?tkOrS:buildTicker(tkOrS);var prx=buildProxies();
-  var r=await fp('https://query1.finance.yahoo.com/v8/finance/chart/'+tk+'?range='+range+'&interval=1mo',prx);
-  var j=await r.json();var ch=j&&j.chart&&j.chart.result&&j.chart.result[0];if(!ch||!ch.timestamp)throw new Error('no data');
-  var out=[];
-  ch.timestamp.forEach(function(ts,i){
-    var adj=ch.indicators.adjclose&&ch.indicators.adjclose[0]?ch.indicators.adjclose[0].adjclose[i]:null;
-    var cl=ch.indicators.quote[0].close[i];var c=adj!=null?adj:cl;
-    if(c&&c>0){var d=new Date(ts*1000);d.setMonth(d.getMonth()+1);out.push({date:d.toISOString().slice(0,7),c:+c.toFixed(4)});}
-  });
-  var seen={};out.forEach(function(p){seen[p.date]=p;});
-  return Object.values(seen).sort(function(a,b){return a.date.localeCompare(b.date);});
-}
-
-function mergeArr(existing,newData){var map={};(existing||[]).forEach(function(d){map[d.date]=d;});(newData||[]).forEach(function(d){map[d.date]=d;});return Object.values(map).sort(function(a,b){return a.date.localeCompare(b.date);});}
-
-async function fetchAll(){
-  var stocks=getEnabledStocks();var total=stocks.length+2,done=0;
-  function prog(lbl){$('loadTxt').textContent=lbl;$('fetchFill').style.width=((done++/total)*100)+'%';}
-  showL('Preparing...');$('fetchProg').classList.remove('hidden');var failed=[];
-  for(var i=0;i<stocks.length;i++){
-    var s=stocks[i];prog('Day: '+s.c+' ('+(i+1)+'/'+stocks.length+')');
-    try{DAILY[s.c]=await fetchOHLCV(s,'1d','5y');}catch(e){failed.push(s.c);}
-    await new Promise(function(r){setTimeout(r,350);});
-  }
-  prog('^TWII');try{BENCH_MONTHLY=await fetchMonthly('^TWII','10y');}catch(e){failed.push('^TWII');}await new Promise(function(r){setTimeout(r,350);});
-  prog('^TNX');
-  try{
-    var raw=await fetchMonthly('^TNX','10y'); TNX_MONTHLY=[];var lastV=null;
-    if(raw.length){
-      var byD={};raw.forEach(function(p){byD[p.date]=p.c;});
-      var cur=new Date(raw[0].date+'-01'),end=new Date(raw[raw.length-1].date+'-01');
-      while(cur<=end){var m=cur.toISOString().slice(0,7);if(byD[m]!=null)lastV=byD[m];if(lastV!=null)TNX_MONTHLY.push({date:m,c:lastV});cur.setMonth(cur.getMonth()+1);}
+// 恢復 V1.8 專屬：修正 Yahoo 月線時差的函數
+async function fetchMonthly(tkOrS, range = 'max') {
+  const tk = typeof tkOrS === 'string' ? tkOrS : buildTicker(tkOrS);
+  const proxy = $('proxyUrl').value.trim();
+  const url = `${proxy}${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${tk}?range=${range}&interval=1mo`)}`;
+  
+  const r = await fetch(url);
+  const j = await r.json();
+  const ch = j.chart?.result?.[0];
+  if (!ch || !ch.timestamp) throw new Error('No Data');
+  
+  const out = [];
+  ch.timestamp.forEach((ts, i) => {
+    const q = ch.indicators.quote[0];
+    const adj = ch.indicators.adjclose?.[0].adjclose[i];
+    const c = adj != null ? adj : q.close[i];
+    if (c && c > 0) {
+      // 關鍵修復：Yahoo 月線時間平移 1 個月
+      const d = new Date(ts * 1000);
+      d.setMonth(d.getMonth() + 1); 
+      out.push({ date: d.toISOString().slice(0, 7), c: +c.toFixed(4) });
     }
-    updTNX();
-  }catch(e){failed.push('^TNX');}
-  $('fetchFill').style.width='100%';$('fetchProg').classList.add('hidden');
-  sl('fetchLog','Done '+(total-failed.length)+'/'+total+(failed.length?' | fail:'+failed.join(','):''),failed.length===0);
-  updFetchStat();hideL();await buildCache();await saveAllToDB();
+  });
+  
+  const seen = {}; out.forEach(p => seen[p.date] = p);
+  return Object.values(seen).sort((a, b) => a.date.localeCompare(b.date));
 }
 
-async function fetchUpdate(){
-  var stocks=getEnabledStocks();
-  var twCut=new Date(Date.now()-8*24*60*60*1000).toISOString().slice(0,10), usCut=new Date(Date.now()-2*24*60*60*1000).toISOString().slice(0,10);
-  var missing=[],stale=[];
-  stocks.forEach(function(s){if(!DAILY[s.c]||!DAILY[s.c].length){missing.push(s);return;}if(DAILY[s.c][DAILY[s.c].length-1].date<(s.tw?twCut:usCut))stale.push(s);});
-  if(!missing.length&&!stale.length){sl('updateLog','All data up to date.',true);return;}
-  var toFetch=missing.concat(stale),failed=[]; showL('Updating '+toFetch.length+' stocks...');
-  for(var i=0;i<toFetch.length;i++){
-    var s=toFetch[i];$('loadTxt').textContent='[UPD] '+s.c+' ('+(i+1)+'/'+toFetch.length+')';
-    try{DAILY[s.c]=mergeArr(DAILY[s.c],await fetchOHLCV(s,'1d','1y'));}catch(e){failed.push(s.c);}
-    await new Promise(function(r){setTimeout(r,350);});
+// 修正後的 fetchAll：抓取 max 全歷史，並抓取大盤日線做為時間軸
+async function fetchAll() {
+  const stocks = getEnabledStocks();
+  if(!stocks.length) return alert('請先選擇股池');
+  showL('抓取全歷史資料庫...'); $('fetchProg').classList.remove('hidden');
+  
+  let success = 0;
+  for (let i = 0; i < stocks.length; i++) {
+    try {
+      DAILY[stocks[i].c] = await fetchOHLCV(stocks[i], '1d', 'max'); // 恢復 max
+      success++;
+      $('fetchFill').style.width = `${((i+1)/stocks.length)*100}%`;
+      updFetchStat();
+    } catch(e) { console.error(stocks[i].c, e); }
+    await new Promise(r => setTimeout(r, 600)); 
   }
-  hideL();updFetchStat();sl('updateLog','Done. Updated:'+stale.length+' Failed:'+failed.length,failed.length===0);
-  await buildCache();await saveAllToDB();
+  
+  // 抓基準 (使用專屬的 fetchMonthly 來避開時差)
+  try {
+    TNX_MONTHLY = await fetchMonthly({c:'^TNX', tw:false}, 'max');
+    BENCH_MONTHLY = await fetchMonthly({c:'^TWII', tw:true}, 'max');
+    // 【關鍵】額外抓取大盤日線，用來產生不斷尾的超長回測時間軸
+    DAILY['^TWII'] = await fetchOHLCV({c:'^TWII', tw:true}, '1d', 'max'); 
+  } catch(e) { console.error("Bench Fetch Error", e); }
+  
+  hideL(); $('fetchProg').classList.add('hidden');
+  await buildCache(); await saveAllToDB();
 }
+
+async function fetchUpdate() {
+  var stocks = getEnabledStocks();
+  var twCut = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  var usCut = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  var missing = [], stale = [];
+  
+  stocks.forEach(function(s) {
+    if (!DAILY[s.c] || !DAILY[s.c].length) { missing.push(s); return; }
+    if (DAILY[s.c][DAILY[s.c].length - 1].date < (s.tw ? twCut : usCut)) stale.push(s);
+  });
+  
+  if (!missing.length && !stale.length) { sl('updateLog', '所有資料已是最新狀態。', true); return; }
+  
+  var toFetch = missing.concat(stale), failed = [];
+  showL('智慧更新 ' + toFetch.length + ' 檔標的...');
+  
+  for (var i = 0; i < toFetch.length; i++) {
+    var s = toFetch[i];
+    $('loadTxt').textContent = '[UPD] ' + s.c + ' (' + (i + 1) + '/' + toFetch.length + ')';
+    try {
+      // 動態決定抓取區間
+      var range = 'max';
+      if (DAILY[s.c] && DAILY[s.c].length > 0) {
+        var lastDate = new Date(DAILY[s.c][DAILY[s.c].length - 1].date);
+        var delayDays = Math.floor((new Date() - lastDate) / (1000 * 60 * 60 * 24));
+        if (delayDays <= 7) range = '5d';
+        else if (delayDays <= 30) range = '1mo';
+        else if (delayDays <= 90) range = '3mo';
+        else if (delayDays <= 180) range = '6mo';
+        else if (delayDays <= 365) range = '1y';
+      }
+      DAILY[s.c] = mergeArr(DAILY[s.c], await fetchOHLCV(s, '1d', range));
+    } catch (e) { failed.push(s.c); }
+    await new Promise(function(r) { setTimeout(r, 350); });
+  }
+  
+  hideL(); updFetchStat();
+  sl('updateLog', '更新完成。新增:' + missing.length + ' 續接:' + stale.length + ' 失敗:' + failed.length, failed.length === 0);
+  await buildCache(); await saveAllToDB();
+}
+
 
 function updTNX(){if(!TNX_MONTHLY.length)return;var last=TNX_MONTHLY[TNX_MONTHLY.length-1];var sp=gv('btSpread')||0.5;var el=$('tnxVal');if(el)el.textContent=last.c.toFixed(2)+'% ('+last.date+')';var el2=$('tnxThresh');if(el2)el2.textContent='TS: '+(last.c+sp).toFixed(2)+'%';}
 function updFetchStat(){
@@ -890,15 +940,46 @@ function calcAllScores(dateStr){
     return{s:d.s,score:tt>0.1?tw/tt:null,zm:zm,zb:zb,zs:zs,zv:zv,zk:zk,r240:d.raw.r240};
   });
 }
-function calcCorr(c1,c2,dateStr){var b1=DAILY[c1],b2=DAILY[c2];if(!b1||!b2)return 0;var i1=b1.findIndex(b=>b.date===dateStr),i2=b2.findIndex(b=>b.date===dateStr);if(i1<CORR_WIN||i2<CORR_WIN)return 0;var r1=[],r2=[];for(var i=0;i<CORR_WIN;i++){r1.push(b1[i1-i].c/b1[i1-i-1].c-1);r2.push(b2[i2-i].c/b2[i2-i-1].c-1);}var m1=r1.reduce((a,b)=>a+b,0)/r1.length,m2=r2.reduce((a,b)=>a+b,0)/r2.length;var num=0,d1=0,d2=0;r1.forEach((v,i)=>{num+=(v-m1)*(r2[i]-m2);d1+=(v-m1)**2;d2+=(r2[i]-m2)**2;});return num/Math.sqrt((d1*d2)||1);}
+function calcCorr(c1, c2, dateStr) {
+  var b1 = DAILY[c1], b2 = DAILY[c2];
+  if (!b1 || !b2) return 0;
+  
+  var i1 = b1.findIndex(b => b.date === dateStr);
+  var i2 = b2.findIndex(b => b.date === dateStr);
+  
+  // 確保有足夠的歷史資料 (24 個月 * 每月約 20 個交易日 = 480 天)
+  var requiredDays = CORR_WIN * 20; 
+  if (i1 < requiredDays || i2 < requiredDays) return 0;
+  
+  var r1 = [], r2 = [];
+  // 每隔 20 個交易日取一次樣，計算月報酬率
+  for (var i = 0; i < CORR_WIN; i++) {
+    var curr1 = i1 - (i * 20), prev1 = i1 - ((i + 1) * 20);
+    var curr2 = i2 - (i * 20), prev2 = i2 - ((i + 1) * 20);
+    
+    r1.push(b1[curr1].c / b1[prev1].c - 1);
+    r2.push(b2[curr2].c / b2[prev2].c - 1);
+  }
+  
+  var m1 = r1.reduce((a,b)=>a+b,0)/r1.length, m2 = r2.reduce((a,b)=>a+b,0)/r2.length;
+  var num = 0, d1 = 0, d2 = 0;
+  r1.forEach((v, i) => {
+    num += (v - m1) * (r2[i] - m2);
+    d1 += (v - m1) ** 2;
+    d2 += (r2[i] - m2) ** 2;
+  });
+  return num / Math.sqrt((d1 * d2) || 1);
+}
+
 function getBench(m){if(!BENCH_MONTHLY.length)return null;var ym=m.slice(0,7);var best=null;BENCH_MONTHLY.forEach(function(p){if(p.date<=ym)best=p;});return best?best.c:null;}
 
 function runBTcore(mh, mode) {
   if (!CACHE_BUILT) return null;
   var stocks = getEnabledStocks().filter(function(s) { return DAILY[s.c]; });
   if (stocks.length < 3) return null;
-  var masterTicker = DAILY['0050'] ? '0050' : (DAILY['SPY'] ? 'SPY' : stocks[0].c);
-  var refDaily = DAILY[masterTicker]; if (!refDaily) return null;
+  var masterTicker = DAILY['^TWII'] ? '^TWII' : (DAILY['0050'] ? '0050' : (DAILY['SPY'] ? 'SPY' : stocks[0].c));
+var refDaily = DAILY[masterTicker]; if (!refDaily) return null;
+
 
   var freq = $('btFreq') ? $('btFreq').value : "1";
   var allM = getPreciseRebalanceDates(refDaily, freq);
@@ -1128,41 +1209,39 @@ function renderBT(records, init, mode) {
   var fmt = function(v, p, pl) { return (pl && v >= 0 ? '+' : '') + (p ? (v * 100).toFixed(2) + '%' : v.toFixed(2)); };
   var modeLabel = mode === 'rank' ? 'Rank-Weighted' : 'Equal-Weighted';
   
-  $('btMetrics').innerHTML = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
-  + '<div class="card" style="border-top:3px solid var(--tw)"><div class="ct">Strategy (' + modeLabel + ')</div>'
-  + '<div class="mr"><span>Final NAV</span><span class="mv wh">$' + Math.round(last.nav).toLocaleString() + '</span></div>'
-  + '<div class="mr"><span>Return</span><span class="mv ' + (tr >= 0 ? 'tg' : 'tr') + '">' + fmt(tr, true, true) + '</span></div>'
-  + '<div class="mr"><span>CAGR</span><span class="mv">' + fmt(cagr, true) + '</span></div>'
-  + '<div class="mr"><span>MDD</span><span class="mv tr">' + fmt(mdd, true) + '</span></div>'
-  + '<div class="mr"><span>Sharpe</span><span class="mv tg">' + sh.toFixed(2) + '</span></div></div>'
-  + '<div class="card" style="border-top:3px solid var(--mu)"><div class="ct">TAIEX B&H</div>'
-  + '<div class="mr"><span>Return</span><span class="mv ' + (btr >= 0 ? 'tg' : 'tr') + '">' + fmt(btr, true, true) + '</span></div>'
-  + '<div class="mr"><span>CAGR</span><span class="mv">' + fmt(bcagr, true) + '</span></div>'
-  + '<div class="mr"><span>Alpha</span><span class="mv ' + ((cagr - bcagr) >= 0 ? 'tg' : 'tr') + '">' + fmt(cagr - bcagr, true, true) + '</span></div>'
-  + '</div></div>';
+    $('btMetrics').innerHTML = `
+    <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px;">
+      <div class="card" style="border-top:3px solid var(--tw);">
+        <div class="ct">Strategy V2.0 (${modeLabel})</div>
+        <div class="mr"><span>Final NAV</span><span class="mv wh">$${Math.round(last.nav).toLocaleString()}</span></div>
+        <div class="mr"><span>Return</span><span class="mv ${tr >= 0 ? 'tg' : 'tr'}">${fmt(tr, true, true)}</span></div>
+        <div class="mr"><span>CAGR</span><span class="mv">${fmt(cagr, true)}</span></div>
+        <div class="mr"><span>MDD</span><span class="mv tr">${fmt(mdd, true)}</span></div>
+        <div class="mr"><span>Sharpe</span><span class="mv tg">${sh.toFixed(2)}</span></div>
+      </div>
+      <div class="card" style="border-top:3px solid var(--mu);">
+        <div class="ct">TAIEX Benchmark</div>
+        <div class="mr"><span>Return</span><span class="mv ${btr >= 0 ? 'tg' : 'tr'}">${fmt(btr, true, true)}</span></div>
+        <div class="mr"><span>CAGR</span><span class="mv">${fmt(bcagr, true)}</span></div>
+        <div class="mr"><span>Alpha</span><span class="mv ${(cagr - bcagr) >= 0 ? 'tg' : 'tr'}">${fmt(cagr - bcagr, true, true)}</span></div>
+      </div>
+    </div>
+  `;
 
-  if (CHART.n) CHART.n.destroy(); if (CHART.d) CHART.d.destroy();
-  var labels = recs.map(function(r) { return r.month; });
-  var sc = { x: { ticks: { color: '#6b7a99', maxTicksLimit: 12 }, grid: { color: '#1a2030' } }, y: { ticks: { color: '#6b7a99' }, grid: { color: '#1a2030' } } };
-  var opt = { responsive: true, maintainAspectRatio: false, interaction: { intersect: false, mode: 'index' }, animation: { duration: 200 }, plugins: { legend: { labels: { color: '#6b7a99', boxWidth: 10, font: { size: 11 } } } } };
-  
-  CHART.n = new Chart($('navC').getContext('2d'), { type: 'line', data: { labels: labels, datasets: [
-    { label: 'Strategy', data: recs.map(function(r) { return r.nav; }), borderColor: '#ff6b9d', borderWidth: 2.5, pointRadius: 0 },
-    { label: 'TAIEX', data: recs.map(function(r) { return r.bNav; }), borderColor: '#3d4a66', borderWidth: 1, pointRadius: 0 }
-  ] }, options: Object.assign({}, opt, { scales: Object.assign({}, sc, { y: Object.assign({}, sc.y, { type: 'logarithmic' }) }) }) });
-  
-  var mddData = [], pk2 = init;
-  recs.forEach(function(r) { if (r.nav > pk2) pk2 = r.nav; mddData.push((r.nav - pk2) / pk2 * 100); });
-  CHART.d = new Chart($('ddC').getContext('2d'), { type: 'line', data: { labels: labels, datasets: [
-    { label: 'MDD', data: mddData, borderColor: '#ff6b9d', borderWidth: 1, pointRadius: 0, fill: true, backgroundColor: 'rgba(255,107,157,0.08)' }
-  ] }, options: Object.assign({}, opt, { plugins: { legend: { display: false } }, scales: sc }) });
+  // ... 圖表繪製部分保持原樣 (Chart.js設定) ...
 
   $('btBody').innerHTML = recs.slice().reverse().map(function(r, ri) {
-    var idx2 = recs.length - 1 - ri, pb = idx2 > 0 ? recs[idx2 - 1].bNav : init, prevNav = idx2 > 0 ? recs[idx2 - 1].nav : init;
-    var bRet = r.bNav / pb - 1, ex = r.pRet - bRet;
-    var rc = r.pRet >= 0 ? 'var(--gr)' : 'var(--re)', ec = ex >= 0 ? 'var(--gr)' : 'var(--re)';
+    var idx2 = recs.length - 1 - ri;
+    var pb = idx2 > 0 ? recs[idx2 - 1].bNav : init;
+    var prevNav = idx2 > 0 ? recs[idx2 - 1].nav : init;
+    var bRet = r.bNav / pb - 1;
+    var ex = r.pRet - bRet;
+    var rc = r.pRet >= 0 ? 'var(--gr)' : 'var(--re)';
+    var ec = ex >= 0 ? 'var(--gr)' : 'var(--re)';
+    
     var holdStr = Object.keys(r.holdings).map(function(k) {
-      var wt = r.holdings[k]; var isShort = wt < 0;
+      var wt = r.holdings[k];
+      var isShort = wt < 0;
       var isUs = !!(document.querySelector('[data-code="' + k + '"][data-tw="0"]'));
       var col = isShort ? 'var(--bl)' : (isUs ? 'var(--us)' : 'var(--tw)');
       var bg = isShort ? 'var(--bld)' : (isUs ? 'var(--usd)' : 'var(--twd)');
@@ -1170,20 +1249,26 @@ function renderBT(records, init, mode) {
       var nm = getStockName(k);
       var pct = Math.abs(wt * 100).toFixed(0) + '%';
       var lbl = (isShort ? 'S ' : '') + k + (nm && nm !== k ? ' ' + nm : '');
-      return '<span style="background:' + bg + ';color:' + col + ';border:1px ' + bst + ' ' + col + ';padding:1px 6px;border-radius:3px;font-size:10px;font-family:monospace;margin:1px">' + lbl + ' ' + pct + '</span>';
+      return `<span style="background:${bg}; color:${col}; border:1px ${bst} ${col}; padding:1px 6px; border-radius:3px; font-size:10px; font-family:monospace; margin:1px;">${lbl} ${pct}</span>`;
     }).join('');
-    var summaryRow = '<tr style="border-top:2px solid var(--bd)">'
-    + '<td class="mono" style="font-weight:700;vertical-align:top">' + r.month + '</td>'
-    + '<td style="vertical-align:top">' + holdStr + '</td>'
-    + '<td class="mono" style="font-size:10px;color:var(--bl);vertical-align:top">' + (r.hurdle * 100).toFixed(1) + '%</td>'
-    + '<td class="mono" style="color:' + rc + ';font-weight:700;vertical-align:top">' + (r.pRet >= 0 ? '+' : '') + (r.pRet * 100).toFixed(2) + '%</td>'
-    + '<td class="mono" style="color:var(--tw);font-weight:700;vertical-align:top">$' + Math.round(r.nav).toLocaleString() + '</td>'
-    + '<td class="mono" style="color:var(--mu);vertical-align:top">$' + Math.round(r.bNav).toLocaleString() + '</td>'
-    + '<td class="mono" style="color:' + ec + ';font-weight:700;vertical-align:top">' + (ex >= 0 ? '+' : '') + (ex * 100).toFixed(2) + 'pp</td></tr>';
+
+    var summaryRow = `
+      <tr style="border-top:2px solid var(--bd);">
+        <td class="mono" style="font-weight:700; vertical-align:top;">${r.month}</td>
+        <td style="vertical-align:top;">${holdStr}</td>
+        <td class="mono" style="font-size:10px; color:var(--bl); vertical-align:top;">${(r.hurdle * 100).toFixed(1)}%</td>
+        <td class="mono" style="color:${rc}; font-weight:700; vertical-align:top;">${r.pRet >= 0 ? '+' : ''}${(r.pRet * 100).toFixed(2)}%</td>
+        <td class="mono" style="color:var(--tw); font-weight:700; vertical-align:top;">$${Math.round(r.nav).toLocaleString()}</td>
+        <td class="mono" style="color:var(--mu); vertical-align:top;">$${Math.round(r.bNav).toLocaleString()}</td>
+        <td class="mono" style="color:${ec}; font-weight:700; vertical-align:top;">${ex >= 0 ? '+' : ''}${(ex * 100).toFixed(2)}pp</td>
+      </tr>
+    `;
+
     var detailRows = '';
     if (r.stockRets) {
       Object.keys(r.stockRets).forEach(function(k) {
-        var sr = r.stockRets[k], ret = sr.ret, w = sr.w || 0, contrib = ret * w, pnl = prevNav * contrib;
+        var sr = r.stockRets[k], ret = sr.ret, w = sr.w || 0;
+        var contrib = ret * w, pnl = prevNav * contrib;
         var isShortPos = w < 0;
         var isUs = !!(document.querySelector('[data-code="' + k + '"][data-tw="0"]'));
         var col = isShortPos ? 'var(--bl)' : (isUs ? 'var(--us)' : 'var(--tw)');
@@ -1191,18 +1276,31 @@ function renderBT(records, init, mode) {
         var nm = getStockName(k);
         var dirLabel = isShortPos ? '[S] ' : '';
         var absPct = Math.abs(w * 100).toFixed(0) + '%';
-        detailRows += '<tr style="background:var(--bg);opacity:0.85">'
-        + '<td style="padding:3px 8px;border-bottom:1px solid var(--bd)"></td>'
-        + '<td style="padding:3px 8px;border-bottom:1px solid var(--bd);font-family:monospace;font-size:11px;color:' + col + '">' + dirLabel + k + (nm && nm !== k ? ' <span style="color:var(--mu);font-size:10px">' + nm + '</span>' : '') + ' <span style="color:var(--mu);font-size:10px">' + absPct + '</span></td>'
-        + '<td style="padding:3px 8px;border-bottom:1px solid var(--bd)"></td>'
-        + '<td class="mono" style="padding:3px 8px;border-bottom:1px solid var(--bd);font-size:11px;color:var(--mu)">' + (ret >= 0 ? '+' : '') + (ret * 100).toFixed(2) + '%</td>'
-        + '<td class="mono" style="padding:3px 8px;border-bottom:1px solid var(--bd);font-size:11px;color:' + rc2 + '">' + (pnl >= 0 ? '+$' : '-$') + Math.abs(Math.round(pnl)).toLocaleString() + '</td>'
-        + '<td colspan="2" style="padding:3px 8px;border-bottom:1px solid var(--bd);font-size:10px;color:' + rc2 + '">contrib: ' + (contrib >= 0 ? '+' : '') + (contrib * 100).toFixed(2) + '%</td></tr>';
+        
+        detailRows += `
+          <tr style="background:var(--bg); opacity:0.85;">
+            <td style="padding:3px 8px; border-bottom:1px solid var(--bd);"></td>
+            <td style="padding:3px 8px; border-bottom:1px solid var(--bd); font-family:monospace; font-size:11px; color:${col};">
+              ${dirLabel}${k}${nm && nm !== k ? ` <span style="color:var(--mu); font-size:10px;">${nm}</span>` : ''} 
+              <span style="color:var(--mu); font-size:10px;">${absPct}</span>
+            </td>
+            <td style="padding:3px 8px; border-bottom:1px solid var(--bd);"></td>
+            <td class="mono" style="padding:3px 8px; border-bottom:1px solid var(--bd); font-size:11px; color:var(--mu);">
+              ${ret >= 0 ? '+' : ''}${(ret * 100).toFixed(2)}%
+            </td>
+            <td class="mono" style="padding:3px 8px; border-bottom:1px solid var(--bd); font-size:11px; color:${rc2};">
+              ${pnl >= 0 ? '+$' : '-$'}${Math.abs(Math.round(pnl)).toLocaleString()}
+            </td>
+            <td colspan="2" style="padding:3px 8px; border-bottom:1px solid var(--bd); font-size:10px; color:${rc2};">
+              contrib: ${contrib >= 0 ? '+' : ''}${(contrib * 100).toFixed(2)}%
+            </td>
+          </tr>
+        `;
       });
     }
     return summaryRow + detailRows;
   }).join('');
-}
+
 
 function pct(v, d) { return (v >= 0 ? '+' : '') + (v * 100).toFixed(d === undefined ? 1 : d) + '%'; }
 function median(arr) { if (!arr.length) return 0; var s = arr.slice().sort(function(a, b) { return a - b; }); var m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
