@@ -1391,7 +1391,140 @@ function updCacheSt() {
 }
 
 // ====================== 啟動 ======================
-window.onload = async function() {
+// ==================== 第6段：UI基礎函數 + 抓取修正 ====================
+
+function getEnabledStocks() {
+  let stocks = [];
+  document.querySelectorAll('.sc.act').forEach(el => {
+    let code = el.getAttribute('data-code');
+    if (!code) return;
+    let nameEl = el.querySelector('.cn');
+    let name = nameEl ? nameEl.textContent : code;
+    let isTW = el.getAttribute('data-tw') === '1';
+    stocks.push({ c: code, n: name, tw: isTW });
+  });
+  return stocks;
+}
+
+function toggleStock(code) {
+  let els = document.querySelectorAll(`[data-code="${code}"]`);
+  els.forEach(el => el.classList.toggle('act'));
+}
+
+function selectAll() {
+  document.querySelectorAll('.sc').forEach(el => el.classList.add('act'));
+}
+
+function selectNone() {
+  document.querySelectorAll('.sc').forEach(el => el.classList.remove('act'));
+}
+
+function selectTW(isOn) {
+  document.querySelectorAll('.sc[data-tw="1"]').forEach(el => {
+    if (isOn) el.classList.add('act');
+    else el.classList.remove('act');
+  });
+}
+
+function toggleInd(header) {
+  let content = header.nextElementSibling;
+  if (content && content.classList.contains('ib')) {
+    content.classList.toggle('col');   // 展開/收合群組
+  }
+}
+
+function initGroupToggles() {
+  document.querySelectorAll('.ih').forEach(header => {
+    header.style.cursor = 'pointer';
+    header.addEventListener('click', () => toggleInd(header));
+  });
+}
+
+// ==================== 修正後的 fetchAll ====================
+async function fetchAll() {
+  showL('正在抓取全部資料，請耐心等待...');
+  sl('fetchLog', '開始抓取 Yahoo Finance...', true);
+
+  const stocks = getEnabledStocks();
+  const proxy = ($('proxyUrl') && $('proxyUrl').value.trim()) || 
+                'https://shield-proxy.depross0205.workers.dev?url=';
+
+  let success = 0, failed = [];
+
+  for (let s of stocks) {
+    try {
+      let url = proxy + encodeURIComponent(
+        `https://query1.finance.yahoo.com/v8/finance/chart/${s.c}?interval=1d&range=5y`
+      );
+      let resp = await fetch(url);
+      let json = await resp.json();
+
+      if (json.chart?.result?.[0]) {
+        let r = json.chart.result[0];
+        let ts = r.timestamp;
+        let q = r.indicators.quote[0];
+        let daily = [];
+        for (let i = 0; i < ts.length; i++) {
+          if (q.close[i] != null) {
+            daily.push({
+              date: new Date(ts[i] * 1000).toISOString().slice(0,10),
+              o: q.open[i], h: q.high[i], l: q.low[i], c: q.close[i], v: q.volume[i] || 0
+            });
+          }
+        }
+        DAILY[s.c] = daily;
+        success++;
+        sl('fetchLog', `✅ ${s.c} (${success}/${stocks.length})`, true);
+      } else {
+        failed.push(s.c);
+      }
+    } catch (e) {
+      failed.push(s.c);
+      console.error(s.c, e);
+    }
+    await new Promise(r => setTimeout(r, 600)); // 避免被封鎖
+  }
+
+  // 抓基準指數
+  try {
+    let tnxUrl = proxy + encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/%5ETNX?interval=1mo&range=10y');
+    let tnxJson = await (await fetch(tnxUrl)).json();
+    if (tnxJson.chart?.result) TNX_MONTHLY = processMonthly(tnxJson.chart.result[0]);
+
+    let twiiUrl = proxy + encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/%5ETWII?interval=1mo&range=10y');
+    let twiiJson = await (await fetch(twiiUrl)).json();
+    if (twiiJson.chart?.result) BENCH_MONTHLY = processMonthly(twiiJson.chart.result[0]);
+  } catch (e) {
+    console.warn('基準指數抓取失敗', e);
+  }
+
+  hideL();
+
+  if (success > 5) {
+    await buildCache();
+    sl('fetchLog', `✅ 抓取完成！成功 ${success} 檔，失敗 ${failed.length} 檔`, true);
+    updCacheSt();
+  } else {
+    sl('fetchLog', `⚠️ 只成功 ${success} 檔，請檢查 Proxy`, false);
+  }
+}
+
+function processMonthly(result) {
+  if (!result || !result.timestamp) return [];
+  let ts = result.timestamp;
+  let q = result.indicators.quote[0];
+  let arr = [];
+  for (let i = 0; i < ts.length; i++) {
+    if (q.close[i] != null) {
+      arr.push({
+        date: new Date(ts[i] * 1000).toISOString().slice(0,7),
+        c: q.close[i]
+      });
+    }
+  }
+  return arr;
+}
+  window.onload = async function() {
   initGroupToggles();
   switchTab('pool', document.querySelector('.tab'));
   
