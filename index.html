@@ -672,23 +672,15 @@ tr:hover{background:var(--sf2)}
   </div>
 </div>
 </div>
-  <script>
-// ============================================================================
-// 台股動能選股系統 V2.0 Experimental (Integrated Final Version)
-// 核心架構：日線動能計算、大盤風控、個股遞補、半月調倉邏輯
-// ============================================================================
+ var WEEKLY={},MONTHLY={},DAILY={},BENCH_MONTHLY=[],TNX_MONTHLY=[];
+var RAW_SCORES={},BT_RESULT=null,CHART={},CACHE_BUILT=false,CACHE_TS=null,SKIP_MO=false,CACHE_SKIP_MO=false,CORR_WIN=24;
 
-// 1. 全域變數定義
-var DAILY = {}, MONTHLY = {}, WEEKLY = {}, BENCH_MONTHLY = [], TNX_MONTHLY = [];
-var RAW_SCORES = {}, BT_RESULT = null, CHART = {}, CACHE_BUILT = false, CACHE_TS = null;
-var SKIP_MO = false, CACHE_SKIP_MO = false, CORR_WIN = 24;
+// V2.0 策略常數
+var N_TREND=60; 
+const MOM_CONSISTENCY_MULT = 1.2; 
+var REBAL_FREQ = "1";
 
-// 策略實驗參數
-var N_TREND = 60; // 統一技術判斷基準 (季線)
-const MOM_CONSISTENCY_MULT = 1.2; // 多週期一致性獎勵倍數
-var REBAL_FREQ = "1"; // 1=全月, 2=半月
-
-// 2. IndexedDB 數據持久化系統 (完整補回)
+// IndexedDB Core
 const DB_NAME = 'FearlessConsoleDB';
 const DB_VERSION = 1;
 
@@ -707,94 +699,272 @@ function initDB() {
 }
 
 async function saveAllToDB() {
-  try {
-    const db = await initDB();
-    const tx = db.transaction('stockData', 'readwrite');
-    const store = tx.objectStore('stockData');
-    store.put({
-      id: 'main_cache',
-      DAILY, MONTHLY, WEEKLY, BENCH_MONTHLY, TNX_MONTHLY,
-      ts: new Date().toISOString()
-    });
-    console.log('Database saved to IndexedDB');
-  } catch (e) { console.error('DB Save Error:', e); }
+  const db = await initDB();
+  const tx = db.transaction('stockData', 'readwrite');
+  const store = tx.objectStore('stockData');
+  store.put({ id: 'main_cache', DAILY, MONTHLY, WEEKLY, BENCH_MONTHLY, TNX_MONTHLY, ts: new Date().toISOString() });
 }
 
 async function loadFromDB() {
-  try {
-    const db = await initDB();
-    const tx = db.transaction('stockData', 'readonly');
-    const request = tx.objectStore('stockData').get('main_cache');
-    return new Promise((resolve) => {
-      request.onsuccess = () => {
-        const res = request.result;
-        if (res) {
-          DAILY = res.DAILY || {};
-          MONTHLY = res.MONTHLY || {};
-          WEEKLY = res.WEEKLY || {};
-          BENCH_MONTHLY = res.BENCH_MONTHLY || [];
-          TNX_MONTHLY = res.TNX_MONTHLY || [];
-          updFetchStat();
-          resolve(true);
-        } else resolve(false);
-      };
-    });
-  } catch (e) { return false; }
-}
-
-// 3. UI 工具函式
-function $(i) { return document.getElementById(i); }
-function gv(i) { var e = $(i); return e ? parseFloat(e.value) || 0 : 0; }
-function sl(id, msg, ok) {
-  var e = $(id); if (e) {
-    e.textContent = msg;
-    e.style.color = ok === true ? 'var(--gr)' : (ok === false ? 'var(--re)' : 'var(--mu)');
-  }
-}
-function showL(t) { $('loadEl').classList.remove('hidden'); $('loadTxt').textContent = t || '...'; }
-function hideL() { $('loadEl').classList.add('hidden'); }
-
-// 4. 資料擷取引擎 (V1.8 穩定版邏輯)
-function buildTicker(s) {
-  if (!s.tw) return s.c;
-  return s.c.includes('.') ? s.c : s.c + '.TW';
-}
-
-async function fetchOHLCV(s, interval, range) {
-  const tk = buildTicker(s);
-  const proxy = $('proxyUrl').value.trim();
-  const url = `${proxy}${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${tk}?range=${range}&interval=${interval}`)}`;
-  
-  const r = await fetch(url);
-  const j = await r.json();
-  const ch = j.chart?.result?.[0];
-  if (!ch || !ch.timestamp) throw new Error('No Data for ' + tk);
-  
-  return ch.timestamp.map((ts, i) => {
-    const q = ch.indicators.quote[0];
-    const adj = ch.indicators.adjclose?.[0].adjclose[i]; // 關鍵：處理還原價
-    return {
-      date: new Date(ts * 1000).toISOString().slice(0, 10),
-      o: q.open[i], h: q.high[i], l: q.low[i], 
-      c: adj || q.close[i], v: q.volume[i]
+  const db = await initDB();
+  const tx = db.transaction('stockData', 'readonly');
+  const request = tx.objectStore('stockData').get('main_cache');
+  return new Promise((resolve) => {
+    request.onsuccess = async () => {
+      const res = request.result;
+      if (res) {
+        DAILY = res.DAILY || {}; MONTHLY = res.MONTHLY || {}; WEEKLY = res.WEEKLY || {};
+        BENCH_MONTHLY = res.BENCH_MONTHLY || []; TNX_MONTHLY = res.TNX_MONTHLY || [];
+        updFetchStat(); updTNX(); await buildCache();
+        sl('dlLog', '從資料庫恢復成功 (' + res.ts.slice(0, 16).replace('T', ' ') + ')', true);
+        resolve(true);
+      } else resolve(false);
     };
-  }).filter(v => v.c != null);
+  });
 }
 
-function updFetchStat() {
-  const bar = $('fetchStat');
-  const stocks = getEnabledStocks();
-  if(!bar) return;
-  bar.innerHTML = stocks.map(s => {
-    const hasData = DAILY[s.c] && DAILY[s.c].length > 0;
-    const col = hasData ? (s.tw ? 'var(--te)' : 'var(--us)') : 'var(--mu)';
-    const bg = hasData ? (s.tw ? 'var(--ted)' : 'var(--usd)') : 'var(--sf2)';
-    const bd = hasData ? (s.tw ? 'var(--te)' : 'var(--us)') : 'var(--bd)';
-    return `<span class="bdg" style="background:${bg};color:${col};border:1px solid ${bd}">${s.c}</span>`;
+function $(i){return document.getElementById(i);}
+function gv(i){var e=$(i);return e?parseFloat(e.value)||0:0;}
+function sl(id,msg,ok){var e=$(id);if(!e)return;e.textContent=msg;e.style.color=ok===true?'var(--gr)':ok===false?'var(--re)':'var(--mu)';}
+function showL(t){$('loadEl').classList.remove('hidden');$('loadTxt').textContent=t||'...';}
+function hideL(){$('loadEl').classList.add('hidden');}
+function dlBlob(b,n){var a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=n;document.body.appendChild(a);a.click();document.body.removeChild(a);}
+function dlText(t,n,ty){dlBlob(new Blob([t],{type:ty||'text/plain;charset=utf-8'}),n);}
+
+function switchTab(name,el){
+  var tabs=document.querySelectorAll('.tab'),panels=document.querySelectorAll('.panel');
+  for(var i=0;i<tabs.length;i++)tabs[i].classList.remove('active');
+  for(var i=0;i<panels.length;i++)panels[i].classList.remove('active');
+  if(el)el.classList.add('active');
+  var p=$('panel-'+name);if(p)p.classList.add('active');
+}
+
+// 恢復 V1.8 的群組全選/全停功能
+function toggleGroup(ibId, turnOn) {
+  var ib = document.getElementById(ibId); if (!ib) return;
+  ib.querySelectorAll('[data-code]').forEach(function(el) {
+    el.dataset.on = turnOn ? '1' : '0';
+    turnOn ? el.classList.add('act') : el.classList.remove('act');
+  });
+  updCountByIb(ib);
+}
+
+function initGroupToggles() {
+  document.querySelectorAll('.ih').forEach(function(ih) {
+    var ib = ih.nextElementSibling;
+    if (!ib || !ib.classList.contains('ib')) return;
+    var ibId = ib.id; if (!ibId) return;
+    var wrap = document.createElement('span');
+    wrap.style.cssText = 'display:inline-flex;align-items:center;gap:3px;margin-right:6px';
+    var b1 = document.createElement('button');
+    b1.className = 'bo sm'; b1.style.cssText = 'padding:1px 5px;font-size:10px;color:var(--gr);border-color:var(--gr)';
+    b1.textContent = '\u5168'; b1.onclick = function(e) { e.stopPropagation(); toggleGroup(ibId, true); };
+    var b2 = document.createElement('button');
+    b2.className = 'bo sm'; b2.style.cssText = 'padding:1px 5px;font-size:10px;color:var(--re);border-color:var(--re)';
+    b2.textContent = '\u505c'; b2.onclick = function(e) { e.stopPropagation(); toggleGroup(ibId, false); };
+    wrap.appendChild(b1); wrap.appendChild(b2);
+    var ic = ih.querySelector('.ic');
+    ih.insertBefore(wrap, ic);
+  });
+}
+
+function toggleStock(code){var el=document.querySelector('[data-code="'+code+'"]');if(!el)return;var on=el.dataset.on==='1';el.dataset.on=on?'0':'1';el.classList.toggle('act',!on);updCount(el);}
+function deleteStock(code){var el=document.querySelector('[data-code="'+code+'"]');if(!el||el.dataset.type==='tw50')return;var ib=el.closest('.ib');el.remove();if(ib)updCountByIb(ib);}
+function toggleInd(ih){var ib=ih.nextElementSibling;if(ib)ib.classList.toggle('col');}
+function selectAll(){document.querySelectorAll('[data-code]').forEach(function(el){el.dataset.on='1';el.classList.add('act');});updAllCounts();}
+function selectNone(){document.querySelectorAll('[data-code]').forEach(function(el){el.dataset.on='0';el.classList.remove('act');});updAllCounts();}
+function selectTW(turnOn){document.querySelectorAll('[data-code][data-tw="1"]').forEach(function(el){el.dataset.on=turnOn?'1':'0';turnOn?el.classList.add('act'):el.classList.remove('act');});updAllCounts();}
+
+function updCount(chip){var ib=chip.closest('.ib');if(ib)updCountByIb(ib);}
+function updCountByIb(ib){var all=ib.querySelectorAll('[data-code]'),act=ib.querySelectorAll('[data-on="1"]');var ih=ib.previousElementSibling;if(ih){var ic=ih.querySelector('.ic');if(ic)ic.textContent=act.length+'/'+all.length;}}
+function updAllCounts(){document.querySelectorAll('.ib').forEach(function(ib){updCountByIb(ib);});}
+
+function addCustom(){
+  var raw=$('cusT').value.trim().toUpperCase();var isUS=$('cusUS')&&$('cusUS').checked;
+  var code=isUS?raw:raw.replace('.TW','');if(!code)return;
+  if(document.querySelector('[data-code="'+code+'"]'))return;
+  var name=$('cusN').value.trim()||code;
+  var chip=document.createElement('span');
+  chip.className='sc act'+(isUS?' usc':'');chip.setAttribute('onclick',"toggleStock('"+code+"')");
+  chip.dataset.code=code;chip.dataset.type='mid';chip.dataset.tw=isUS?'0':'1';chip.dataset.on='1';
+  chip.innerHTML='<span class="cc">'+code+'</span><span class="cn">'+name+'</span><span class="cd" onclick="event.stopPropagation();deleteStock(\''+code+'\')">x</span>';
+  var ibs=document.querySelectorAll('.ib');if(ibs.length)ibs[0].appendChild(chip);
+  $('cusT').value='';$('cusN').value='';updAllCounts();
+}
+
+function getEnabledStocks(){
+  var result=[];
+  document.querySelectorAll('[data-code][data-on="1"]').forEach(function(el){
+    var cn=el.querySelector('.cn');result.push({c:el.dataset.code,n:cn?cn.textContent:'',type:el.dataset.type,tw:el.dataset.tw==='1'});
+  });
+  return result;
+}
+function getStockName(code){var el=document.querySelector('[data-code="'+code+'"] .cn');return el?el.textContent:code;}
+function getWeightMode(){var r=document.querySelector('input[name="wtMode"]:checked');return r?r.value:'eq';}
+// 抓取引擎 (完整保留 V1.8 的進度條、台股時差處理)
+function buildProxies(){
+  var p=$('proxyUrl')?$('proxyUrl').value.trim():'';
+  if(p&&!p.includes('url='))p+=p.endsWith('/')?'?url=':'/?url=';
+  return [p,'https://api.allorigins.win/raw?url=','https://api.codetabs.com/v1/proxy?quest='].filter(Boolean);
+}
+
+async function fp(url,proxies){
+  var last;
+  for(var i=0;i<proxies.length;i++){try{var r=await fetch(proxies[i]+encodeURIComponent(url));if(!r.ok)throw new Error('HTTP '+r.status);return r;}catch(e){last=e;}}
+  throw last||new Error('all proxies failed');
+}
+
+function buildTicker(s){
+  if(!s.tw)return s.c;
+  if(s.c.charAt(0)==='^'||s.c.indexOf('.')>=0)return s.c;
+  return s.c+'.TW';
+}
+
+async function fetchOHLCV(s,interval,prx){
+  var tk=buildTicker(s);
+  var r=await fp('https://query1.finance.yahoo.com/v8/finance/chart/'+tk+'?range=max&interval='+interval,prx);
+  var j=await r.json();var ch=j&&j.chart&&j.chart.result&&j.chart.result[0];
+  if(!ch||!ch.timestamp)throw new Error('no data');
+  var out=[];
+  ch.timestamp.forEach(function(ts,i){
+    var q=ch.indicators.quote[0];var h=q.high[i],l=q.low[i],c=q.close[i],v=q.volume[i];
+    var adj=ch.indicators.adjclose&&ch.indicators.adjclose[0]?ch.indicators.adjclose[0].adjclose[i]:null;
+    var finalC = adj != null ? adj : c; // 台股還原價
+    if(finalC&&finalC>0&&h&&l&&v!=null)out.push({date:new Date(ts*1000).toISOString().slice(0,10),h:+h.toFixed(3),l:+l.toFixed(3),c:+finalC.toFixed(3),v:+v});
+  });
+  return out;
+}
+
+async function fetchMonthly(tkOrS,prx){
+  var tk=typeof tkOrS==='string'?tkOrS:buildTicker(tkOrS);
+  var r=await fp('https://query1.finance.yahoo.com/v8/finance/chart/'+tk+'?range=max&interval=1mo',prx);
+  var j=await r.json();var ch=j&&j.chart&&j.chart.result&&j.chart.result[0];
+  if(!ch||!ch.timestamp)throw new Error('no data');
+  var out=[];
+  ch.timestamp.forEach(function(ts,i){
+    var adj=ch.indicators.adjclose&&ch.indicators.adjclose[0]?ch.indicators.adjclose[0].adjclose[i]:null;
+    var cl=ch.indicators.quote[0].close[i];var c=adj!=null?adj:cl;
+    if(c&&c>0){
+      var d=new Date(ts*1000);d.setMonth(d.getMonth()+1); // Yahoo 月頻時間平移修復
+      out.push({date:d.toISOString().slice(0,7),c:+c.toFixed(4)});
+    }
+  });
+  var seen={};out.forEach(function(p){seen[p.date]=p;});
+  return Object.values(seen).sort(function(a,b){return a.date.localeCompare(b.date);});
+}
+
+function mergeArr(existing,newData){
+  var map={};
+  (existing||[]).forEach(function(d){map[d.date]=d;});
+  (newData||[]).forEach(function(d){map[d.date]=d;});
+  return Object.values(map).sort(function(a,b){return a.date.localeCompare(b.date);});
+}
+
+async function fetchUpdate(){
+  var prx=buildProxies();var stocks=getEnabledStocks();
+  var twCut=new Date(Date.now()-8*24*60*60*1000).toISOString().slice(0,10);
+  var usCut=new Date(Date.now()-2*24*60*60*1000).toISOString().slice(0,10);
+  var thisMonth=new Date().toISOString().slice(0,7);
+  var missing=[],stale=[];
+  stocks.forEach(function(s){
+    if(!DAILY[s.c]||!DAILY[s.c].length){missing.push(s);return;}
+    if(DAILY[s.c][DAILY[s.c].length-1].date<(s.tw?twCut:usCut))stale.push(s);
+  });
+  var benchStale=!BENCH_MONTHLY.length||(BENCH_MONTHLY[BENCH_MONTHLY.length-1].date<thisMonth);
+  var tnxStale=!TNX_MONTHLY.length||(TNX_MONTHLY[TNX_MONTHLY.length-1].date<thisMonth);
+  if(!missing.length&&!stale.length&&!benchStale&&!tnxStale){sl('updateLog','All data up to date.',true);return;}
+  var toFetch=missing.concat(stale),failed=[];
+  showL('Updating '+toFetch.length+' stocks...');
+  for(var i=0;i<toFetch.length;i++){
+    var s=toFetch[i];var isMissing=missing.indexOf(s)>=0;
+    $('loadTxt').textContent=(isMissing?'[NEW] ':'[UPD] ')+s.c+' ('+(i+1)+'/'+toFetch.length+')';
+    try{ DAILY[s.c]=mergeArr(DAILY[s.c],await fetchOHLCV(s,'1d',prx)); }catch(e){failed.push(s.c);}
+    await new Promise(function(r){setTimeout(r,350);});
+  }
+  if(benchStale){
+    $('loadTxt').textContent='Update ^TWII...';
+    try{BENCH_MONTHLY=mergeArr(BENCH_MONTHLY,await fetchMonthly('^TWII',prx));}catch(e){failed.push('^TWII');}
+    await new Promise(function(r){setTimeout(r,350);});
+  }
+  if(tnxStale){
+    $('loadTxt').textContent='Update ^TNX...';
+    try{
+      var raw=await fetchMonthly('^TNX',prx);
+      TNX_MONTHLY=[];var lastV=null;
+      if(raw.length){
+        var byD={};raw.forEach(function(p){byD[p.date]=p.c;});
+        var cur=new Date(raw[0].date+'-01'),end=new Date(raw[raw.length-1].date+'-01');
+        while(cur<=end){
+          var m=cur.toISOString().slice(0,7);
+          if(byD[m]!=null)lastV=byD[m];
+          if(lastV!=null)TNX_MONTHLY.push({date:m,c:lastV});
+          cur.setMonth(cur.getMonth()+1);
+        }
+      }
+      updTNX();
+    }catch(e){failed.push('^TNX');}
+  }
+  hideL();updFetchStat();
+  sl('updateLog','Done. New:'+missing.length+' Updated:'+stale.length,failed.length===0);
+  await buildCache();await saveAllToDB();
+}
+
+async function fetchAll(){
+  var prx=buildProxies();var stocks=getEnabledStocks();
+  var total=stocks.length+2,done=0;
+  function prog(lbl){$('loadTxt').textContent=lbl;$('fetchFill').style.width=((done++/total)*100)+'%';}
+  showL('Preparing...');$('fetchProg').classList.remove('hidden');var failed=[];
+  for(var i=0;i<stocks.length;i++){
+    var s=stocks[i];prog('Day: '+s.c+' ('+(i+1)+'/'+stocks.length+')');
+    try{DAILY[s.c]=await fetchOHLCV(s,'1d',prx);}catch(e){failed.push(s.c);}
+    await new Promise(function(r){setTimeout(r,350);});
+  }
+  prog('^TWII');
+  try{BENCH_MONTHLY=await fetchMonthly('^TWII',prx);}catch(e){failed.push('^TWII');}
+  await new Promise(function(r){setTimeout(r,350);});
+  prog('^TNX');
+  try{
+    var raw=await fetchMonthly('^TNX',prx);
+    TNX_MONTHLY=[];var lastV=null;
+    if(raw.length){
+      var byD={};raw.forEach(function(p){byD[p.date]=p.c;});
+      var cur=new Date(raw[0].date+'-01'),end=new Date(raw[raw.length-1].date+'-01');
+      while(cur<=end){
+        var m=cur.toISOString().slice(0,7);
+        if(byD[m]!=null)lastV=byD[m];
+        if(lastV!=null)TNX_MONTHLY.push({date:m,c:lastV});
+        cur.setMonth(cur.getMonth()+1);
+      }
+    }
+    updTNX();
+  }catch(e){failed.push('^TNX');}
+  $('fetchFill').style.width='100%';$('fetchProg').classList.add('hidden');
+  sl('fetchLog','Done '+(total-failed.length)+'/'+total+(failed.length?' | fail:'+failed.slice(0,8).join(','):''),failed.length===0);
+  updFetchStat();hideL();
+  await buildCache();await saveAllToDB();
+}
+
+function updTNX(){
+  if(!TNX_MONTHLY.length)return;
+  var last=TNX_MONTHLY[TNX_MONTHLY.length-1];
+  var sp=gv('btSpread')||0.5;
+  var el=$('tnxVal');if(el)el.textContent=last.c.toFixed(2)+'% ('+last.date+')';
+  var el2=$('tnxThresh');if(el2)el2.textContent='TS: '+(last.c+sp).toFixed(2)+'%';
+}
+
+function updFetchStat(){
+  var bar=$('fetchStat');if(!bar)return;
+  var stocks=getEnabledStocks();
+  bar.innerHTML=stocks.map(function(s){
+    var ok=(DAILY[s.c]&&DAILY[s.c].length>0);
+    var col=ok?(s.tw?'var(--te)':'var(--us)'):'var(--mu)';
+    var bg=ok?(s.tw?'var(--ted)':'var(--usd)'):'var(--sf2)';
+    var bd=ok?(s.tw?'var(--te)':'var(--us)'):'var(--bd)';
+    return '<span class="bdg" style="background:'+bg+';color:'+col+';border:1px solid '+bd+'">'+s.c+'</span>';
   }).join('');
 }
-// 5. 技術指標與動能模型 (V2.0 規格)
 
+// V2.0 技術指標與快取系統
 function calcMA(bars, dateStr, period) {
   if (!bars) return null;
   let idx = bars.findIndex(b => b.date === dateStr);
@@ -817,7 +987,15 @@ function getPrevWorkDay(bars, dateStr, offset = 5) {
   return bars[idx - offset].date;
 }
 
-// 假日順延日期選取器 (1號與15號邏輯)
+function isBearishRegime(bars, dateStr, period = 60) {
+  let ma = calcMA(bars, dateStr, period);
+  let price = getPriceOnDate(bars, dateStr);
+  if (!ma || !price) return false;
+  let prevDate = getPrevWorkDay(bars, dateStr, 5);
+  let prevMA = calcMA(bars, prevDate, period);
+  return price < ma && (prevMA ? ma < prevMA : true);
+}
+
 function getPreciseRebalanceDates(bars, freq) {
   const dates = [];
   let lastYM = "";
@@ -825,11 +1003,9 @@ function getPreciseRebalanceDates(bars, freq) {
   bars.forEach(bar => {
     const ym = bar.date.slice(0, 7);
     const day = parseInt(bar.date.slice(8, 10));
-    // 每月第一個交易日 (1號順延)
     if (ym !== lastYM) {
       dates.push(bar.date); lastYM = ym; hasHalf = false;
     }
-    // 15號之後第一個交易日 (15號順延)
     if (freq === "2" && !hasHalf && day >= 15) {
       if (dates[dates.length - 1] !== bar.date) {
         dates.push(bar.date); hasHalf = true;
@@ -839,8 +1015,41 @@ function getPreciseRebalanceDates(bars, freq) {
   return dates;
 }
 
+function calcVWMA(bars,n){
+  if(bars.length<n)return null;
+  var sl=bars.slice(-n),sp=0,sv=0;
+  sl.forEach(function(b){sp+=b.c*b.v;sv+=b.v;});
+  return sv>0?sp/sv:null;
+}
+function calcBias(bars,N){var v=calcVWMA(bars,N);return v?(bars[bars.length-1].c-v)/v:null;}
+function calcSlope(bars,N){
+  if(bars.length<N+3)return null;var va=[];
+  for(var i=bars.length-N;i<bars.length;i++){
+    var sl=bars.slice(Math.max(0,i-N+1),i+1);var sp=0,sv=0;
+    sl.forEach(function(b){sp+=b.c*b.v;sv+=b.v;});if(sv>0)va.push(sp/sv);
+  }
+  if(va.length<Math.floor(N/2))return null;
+  var n=va.length,sx=0,sy=0,sxy=0,sx2=0;
+  for(var j=0;j<n;j++){sx+=j;sy+=va[j];sxy+=j*va[j];sx2+=j*j;}
+  var den=n*sx2-sx*sx;if(!den)return 0;
+  return (n*sxy-sx*sy)/den/(va[0]||1);
+}
+function calcVol(bars,N){
+  if(bars.length<N+1)return null;var sl=bars.slice(-N),sc=[];
+  for(var i=1;i<sl.length;i++){
+    var pr=(sl[i].c-sl[i-1].c)/(sl[i-1].c||1);var vr=sl[i-1].v>0?sl[i].v/sl[i-1].v:1;
+    sc.push((pr>=0?1:-1)*(pr>=0?(vr-1):(1-vr)));
+  }
+  return sc.length?sc.reduce(function(a,b){return a+b;},0)/sc.length:null;
+}
+function calcKbar(bars,N){
+  if(bars.length<N)return null;var sl=bars.slice(-N);
+  var v=sl.map(function(b){var r=b.h-b.l;return r>0?(b.c-b.l)/r:0.5;});
+  return v.reduce(function(a,b){return a+b;},0)/v.length;
+}
+
 function momZ(bars, idx, period) {
-  if (!bars || idx < period) return null;
+  if (idx < period) return null;
   let ret = bars[idx].c / bars[idx - period].c - 1;
   let rets = [];
   let start = Math.max(period, idx - 250);
@@ -855,265 +1064,687 @@ function rawMom(daily, idx) {
   let z240 = momZ(daily, idx, 240), z120 = momZ(daily, idx, 120), z60 = momZ(daily, idx, 60);
   if (z240 === null || z120 === null || z60 === null) return null;
   let score = 0.5 * z240 + 0.3 * z120 + 0.2 * z60;
-  // 多週期一致性加權
-  if (z240 > 0 && z120 > 0 && z60 > 0) score *= MOM_CONSISTENCY_MULT;
+  if (z240 > 0 && z120 > 0 && z60 > 0) score *= MOM_CONSISTENCY_MULT; // 一致性加權
   return score;
 }
 
-// 其餘技術指標 (Slope, Vol, Kbar)
-function calcVWMA(bars, n) {
-  if (bars.length < n) return null;
-  let sl = bars.slice(-n), sp = 0, sv = 0;
-  sl.forEach(b => { sp += b.c * b.v; sv += b.v; });
-  return sv > 0 ? sp / sv : null;
-}
-
-function calcBias(bars, N) {
-  let v = calcVWMA(bars, N);
-  return v ? (bars[bars.length - 1].c - v) / v : 0;
-}
-
-function calcSlope(bars, N) {
-  if (bars.length < N + 3) return 0;
-  let va = [];
-  for (let i = bars.length - N; i < bars.length; i++) {
-    let v = calcVWMA(bars.slice(0, i + 1), N); if (v) va.push(v);
-  }
-  if (va.length < 5) return 0;
-  let n = va.length, sx = 0, sy = 0, sxy = 0, sx2 = 0;
-  for (let j = 0; j < n; j++) { sx += j; sy += va[j]; sxy += j * va[j]; sx2 += j * j; }
-  let den = n * sx2 - sx * sx;
-  return den ? (n * sxy - sx * sy) / den / (va[0] || 1) : 0;
-}
-
-function calcVol(bars, N) {
-  if (bars.length < N + 1) return 0;
-  let sl = bars.slice(-N), sc = [];
-  for (let i = 1; i < sl.length; i++) {
-    let pr = (sl[i].c - sl[i - 1].c) / sl[i - 1].c;
-    let vr = sl[i - 1].v > 0 ? sl[i].v / sl[i - 1].v : 1;
-    sc.push((pr >= 0 ? 1 : -1) * (pr >= 0 ? (vr - 1) : (1 - vr)));
-  }
-  return sc.length ? sc.reduce((a, b) => a + b, 0) / sc.length : 0;
-}
-
-function calcKbar(bars, N) {
-  if (bars.length < N) return 0;
-  let sl = bars.slice(-N);
-  let v = sl.map(b => { let r = b.h - b.l; return r > 0 ? (b.c - b.l) / r : 0.5; });
-  return v.reduce((a, b) => a + b, 0) / v.length;
-}
-
-// 6. 快取建立引擎
 async function buildCache() {
   const stocks = getEnabledStocks();
-  showL('Building V2.0 Experimental Cache...');
-  RAW_SCORES = {};
-  REBAL_FREQ = $('btFreq') ? $('btFreq').value : "1";
-
-  for (let s of stocks) {
-    let bars = DAILY[s.c];
-    if (!bars || bars.length < 300) continue;
-    RAW_SCORES[s.c] = {};
-    let rebalDates = getPreciseRebalanceDates(bars, REBAL_FREQ);
-    for (let d of rebalDates) {
-      let idx = bars.findIndex(b => b.date === d);
-      if (idx >= 240) {
-        RAW_SCORES[s.c][d] = {
-          rm: rawMom(bars, idx),
-          rb: calcBias(bars.slice(0, idx + 1), N_TREND),
-          rs: calcSlope(bars.slice(0, idx + 1), N_TREND),
-          rv: calcVol(bars.slice(0, idx + 1), N_TREND),
-          rk: calcKbar(bars.slice(0, idx + 1), N_TREND),
-          r240: bars[idx].c / (bars[idx - 240] ? bars[idx - 240].c : 1) - 1
+  var withData = stocks.filter(function(s){return DAILY[s.c]&&DAILY[s.c].length>=240;});
+  if(!withData.length){updCacheSt();return;}
+  showL('Building V2.0 Cache...');RAW_SCORES={};
+  var freq = $('btFreq') ? $('btFreq').value : "1";
+  for(var si=0;si<withData.length;si++){
+    var s=withData[si];$('loadTxt').textContent='Cache: '+s.c+' ('+(si+1)+'/'+withData.length+')';
+    var bars=DAILY[s.c];
+    RAW_SCORES[s.c]={};
+    var rebalDates = getPreciseRebalanceDates(bars, freq);
+    rebalDates.forEach(function(d){
+      var mIdx = bars.findIndex(function(b){return b.date === d;});
+      if(mIdx>=240){
+        var cut = bars.slice(0, mIdx+1);
+        RAW_SCORES[s.c][d]={
+          rm:rawMom(bars,mIdx),
+          rb:calcBias(cut,N_TREND),
+          rs:calcSlope(cut,N_TREND),
+          rv:calcVol(cut,N_TREND),
+          rk:calcKbar(cut,N_TREND),
+          r240: bars[mIdx].c/(bars[mIdx-240]?bars[mIdx-240].c:1)-1
         };
       }
-    }
-  }
-  CACHE_BUILT = true; CACHE_TS = new Date().toISOString();
-  hideL(); updCacheSt(); updFetchStat();
-}
-// 7. 回測核心與風控邏輯
-
-function isBearishRegime(bars, dateStr) {
-  let ma = calcMA(bars, dateStr, 60);
-  let price = getPriceOnDate(bars, dateStr);
-  if (!ma || !price) return false;
-  let prevDate = getPrevWorkDay(bars, dateStr, 5);
-  let prevMA = calcMA(bars, prevDate, 60);
-  return price < ma && (prevMA ? ma < prevMA : true);
-}
-
-function runBTcore(mh, mode) {
-  if (!CACHE_BUILT) return null;
-  const masterTicker = DAILY['0050'] ? '0050' : (DAILY['SPY'] ? 'SPY' : Object.keys(DAILY)[0]);
-  const rebalDates = getPreciseRebalanceDates(DAILY[masterTicker], $('btFreq').value);
-  
-  let nav = gv('btCap') || 100000, bNav = nav, records = [], holdings = { CASH: 1.0 };
-  const COST = (gv('btC') || 0.3) / 100, ct = gv('corrT') || 0.75;
-  const indExitOn = ($('btIndExit').value === 'on'), regimeOn = ($('btRegime').value === 'on'), regimeExp = gv('btRegimeExp') || 50;
-
-  for (let i = 1; i < rebalDates.length; i++) {
-    let curDate = rebalDates[i], prevDate = rebalDates[i - 1];
-    let hurdle = getHurdle(curDate);
-    
-    // 取得評分並過濾
-    let valid = [];
-    Object.keys(RAW_SCORES).forEach(c => {
-      let data = RAW_SCORES[c][curDate];
-      if (data) valid.push({ s: {c:c, tw:!!document.querySelector(`[data-code="${c}"][data-tw="1"]`)}, ...data, score: data.rm });
     });
-    let sorted = valid.filter(r => r.r240 > hurdle).sort((a, b) => b.score - a.score);
+    if(si%5===4)await new Promise(function(r){setTimeout(r,0);});
+  }
+  CACHE_BUILT=true;CACHE_TS=new Date().toISOString();CACHE_SKIP_MO=SKIP_MO;
+  hideL();updCacheSt();updTNX();
+}
 
-    // V2.0 關鍵：遞補機制 (Successive Entry)
-    let selected = [];
-    for (let cand of sorted) {
-      if (selected.length >= mh) break;
-      if (indExitOn && isBearishRegime(DAILY[cand.s.c], curDate)) continue; // 跌破則跳過，由下一名遞補
-      if (selected.every(x => Math.abs(calcCorr(cand.s.c, x.s.c, curDate)) < ct)) selected.push(cand);
+function updCacheSt(){
+  var el=$('cacheTxt');if(!el)return;
+  if(!CACHE_BUILT){el.textContent='Cache: not built';el.style.color='var(--mu)';return;}
+  var n=Object.keys(RAW_SCORES).length;
+  var dt=new Date(CACHE_TS).toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit'});
+  el.textContent='Cache OK ('+n+' stocks, '+dt+')';el.style.color='var(--gr)';
+}
+// 7. 回測與評分系統
+function crossZ(arr,cap){
+  cap=cap||2;
+  var vals=arr.filter(function(v){return v!==null&&!isNaN(v);});
+  if(vals.length<3)return arr.map(function(v){return v===null?null:0;});
+  var mean=vals.reduce(function(a,b){return a+b;},0)/vals.length;
+  var std=Math.sqrt(vals.reduce(function(a,b){return a+(b-mean)*(b-mean);},0)/vals.length)||1;
+  return arr.map(function(v){if(v===null)return null;return Math.max(-cap,Math.min(cap,(v-mean)/std));});
+}
+
+function getTNXRate(dateStr) {
+  if (!TNX_MONTHLY.length) return 0.04;
+  let ym = dateStr.slice(0, 7); let best = null;
+  TNX_MONTHLY.forEach(p => { if (p.date <= ym) best = p; });
+  return best ? (best.c / 100) : 0.04;
+}
+function getHurdle(dateStr) { return Math.max(0, getTNXRate(dateStr) + (gv('btSpread') || 0.5) / 100); }
+
+function calcAllScores(dateStr){
+  var stocks=getEnabledStocks().filter(function(s){return RAW_SCORES[s.c]&&RAW_SCORES[s.c][dateStr];});
+  if(stocks.length<5)return[];
+  var wM=gv('wMom')/100,wB=gv('wBias')/100,wS=gv('wSlope')/100,wV=gv('wVol')/100,wK=gv('wKbar')/100;
+  var rMs=[],rBs=[],rSs=[],rVs=[],rKs=[];
+  var infos=stocks.map(function(s){
+    var raw=RAW_SCORES[s.c][dateStr];
+    rMs.push(raw.rm);rBs.push(raw.rb);rSs.push(raw.rs);rVs.push(raw.rv);rKs.push(raw.rk);
+    return{s:s,raw:raw};
+  });
+  var zMs=crossZ(rMs,99),zBs=crossZ(rBs,2),zSs=crossZ(rSs,99),zVs=crossZ(rVs,2),zKs=crossZ(rKs,99);
+  return infos.map(function(d,i){
+    var zm=zMs[i],zb=zBs[i],zs=zSs[i],zv=zVs[i],zk=zKs[i],tw=0,tt=0;
+    if(zm!==null){tw+=wM*zm;tt+=wM;}if(zb!==null){tw+=wB*zb;tt+=wB;}
+    if(zs!==null){tw+=wS*zs;tt+=wS;}if(zv!==null){tw+=wV*zv;tt+=wV;}
+    if(zk!==null){tw+=wK*zk;tt+=wK;}
+    return{s:d.s,score:tt>0.1?tw/tt:null,zm:zm,zb:zb,zs:zs,zv:zv,zk:zk,r240:d.raw.r240};
+  });
+}
+
+function calcCorr(c1,c2,dateStr){
+  var b1=DAILY[c1],b2=DAILY[c2];if(!b1||!b2)return 0;
+  var i1=b1.findIndex(b=>b.date===dateStr),i2=b2.findIndex(b=>b.date===dateStr);
+  if(i1<CORR_WIN||i2<CORR_WIN)return 0;
+  var r1=[],r2=[];
+  for(var i=0;i<CORR_WIN;i++){r1.push(b1[i1-i].c/b1[i1-i-1].c-1);r2.push(b2[i2-i].c/b2[i2-i-1].c-1);}
+  var m1=r1.reduce((a,b)=>a+b,0)/r1.length,m2=r2.reduce((a,b)=>a+b,0)/r2.length;
+  var num=0,d1=0,d2=0;
+  r1.forEach((v,i)=>{num+=(v-m1)*(r2[i]-m2);d1+=(v-m1)**2;d2+=(r2[i]-m2)**2;});
+  return num/Math.sqrt((d1*d2)||1);
+}
+
+function getBench(m) {
+  if (!BENCH_MONTHLY.length) return null;
+  let ym = m.slice(0, 7); let best = null;
+  BENCH_MONTHLY.forEach(p => { if (p.date <= ym) best = p; });
+  return best ? best.c : null;
+}
+
+// 8. 核心回測引擎 (V2.0 激進遞補版)
+function runBTcore(mh, mode) {
+  var stocks = getEnabledStocks().filter(function(s) { return DAILY[s.c]; });
+  if (stocks.length < 3) return null;
+  var masterTicker = DAILY['0050'] ? '0050' : (DAILY['SPY'] ? 'SPY' : stocks[0].c);
+  var refDaily = DAILY[masterTicker];
+  if (!refDaily) return null;
+
+  var freq = $('btFreq') ? $('btFreq').value : "1";
+  var allM = getPreciseRebalanceDates(refDaily, freq);
+  var rawS = $('btS') ? ($('btS').value || '').trim().slice(0, 10) : '';
+  var rawE = $('btE') ? ($('btE').value || '').trim().slice(0, 10) : '';
+  var lagEl = document.querySelector('input[name="lagMode"]:checked');
+  var LAG = lagEl ? parseInt(lagEl.value) : 1;
+
+  var MIN = 20, cS = MIN + LAG;
+  if (rawS) { for (var i = MIN + LAG; i < allM.length; i++) { if (allM[i] >= rawS) { cS = i; break; } } }
+  var cE = allM.length - 1;
+  if (rawE) { for (var i2 = cE; i2 >= MIN + LAG; i2--) { if (allM[i2] <= rawE) { cE = i2; break; } } }
+  if (cS > cE) return null;
+
+  var INIT = gv('btCap') || 100000, COST = (gv('btC') || 0.3) / 100, ct = gv('corrT') || 0.75;
+  var shortN = parseInt($('btSN') ? $('btSN').value : '0') || 0;
+  var capMode = document.querySelector('input[name="capMode"]:checked') ? document.querySelector('input[name="capMode"]:checked').value : 'neutral';
+  var shortTSF = !!($('btSTSF') && $('btSTSF').checked);
+  
+  var indExitOn = $('btIndExit') && $('btIndExit').value === 'on';
+  var regimeOn = $('btRegime') && $('btRegime').value === 'on';
+  var regimeExp = gv('btRegimeExp') || 50;
+
+  var nav = INIT, bNav = INIT, records = [], holdings = { CASH: 1.0 };
+  var DEFENSIVE = ['TLT', 'GLD', 'SGOV'];
+
+  for (var idx = cS; idx <= cE; idx++) {
+    var sigM = allM[idx], prevM = allM[idx - 1], scoreM = allM[idx - LAG];
+    var hurdle = getHurdle(scoreM);
+    var sc2 = calcAllScores(scoreM);
+    var valid = sc2.filter(function(r) { return r.score !== null; });
+    valid.sort(function(a, b) { return b.score - a.score; });
+
+    if (valid.length < 5) {
+      var b0x = getBench(prevM), b1x = getBench(sigM);
+      if (b0x && b1x && b0x > 0) bNav *= (1 + b1x / b0x - 1);
+      records.push({ month: sigM, nav: nav, bNav: bNav, holdings: { CASH: 1.0 }, pRet: 0, hurdle: hurdle, stockRets: {} });
+      holdings = { CASH: 1.0 }; continue;
     }
 
-    // 大盤風控 (Regime Switch)
-    let exposure = 1.0;
-    if (regimeOn && isBearishRegime(DAILY[masterTicker], curDate)) exposure = regimeExp / 100;
+    // 遞補機制
+    var tsP = valid.filter(function(r) { return r.r240 !== null && r.r240 > hurdle && DEFENSIVE.indexOf(r.s.c) === -1; });
+    var sel = [];
+    for (var j = 0; j < tsP.length; j++) {
+      if (sel.length >= mh) break;
+      var cand = tsP[j];
+      if (indExitOn && isBearishRegime(DAILY[cand.s.c], sigM, 60)) continue;
+      if (sel.every(function(x) { return Math.abs(calcCorr(cand.s.c, x.s.c, scoreM)) < ct; })) sel.push(cand);
+    }
 
-    // 權重分配與現金緩衝
-    let newH = {};
-    if (selected.length) {
-      selected.forEach((r, idx) => {
-        let w = (mode === 'rank') ? (selected.length - idx) / (selected.length * (selected.length + 1) / 2) : (1 / selected.length);
-        newH[r.s.c] = w * exposure;
-      });
-      if (exposure < 1) newH['CASH'] = 1 - exposure;
-    } else newH = { CASH: 1.0 };
+    var slots = mh - sel.length;
+    if (slots > 0) {
+      var defCands = sc2.filter(function(r) {
+        if (r.r240 === null) return false;
+        if (r.s.c === 'SGOV') return r.r240 > 0;
+        return (r.s.c === 'TLT' || r.s.c === 'GLD') && r.r240 > hurdle + 0.01;
+      }).sort(function(a, b) { return b.r240 - a.r240; });
+      for (var jd = 0; jd < defCands.length && slots > 0; jd++) { sel.push(defCands[jd]); slots--; }
+    }
 
-    // 成本與淨值計算 (恢復 V1.8 精確邏輯)
-    let tv = 0;
-    let allC = new Set([...Object.keys(holdings), ...Object.keys(newH)]);
-    allC.forEach(c => tv += Math.abs((newH[c] || 0) - (holdings[c] || 0)));
-    
-    let pRet = 0, stockRets = {};
-    Object.keys(newH).forEach(c => {
-      if (c === 'CASH') { 
-        let r_c = getTNXRate(curDate) / ($('btFreq').value === "2" ? 24 : 12);
-        pRet += newH[c] * r_c; stockRets.CASH = { ret: r_c, w: newH[c] }; return; 
+    // 大盤風控
+    var exposure = 1.0;
+    if (regimeOn) {
+      var mBars = DAILY['0050'] || DAILY['SPY'] || DAILY[masterTicker];
+      if (isBearishRegime(mBars, sigM, 60)) exposure = regimeExp / 100;
+    }
+
+    var selS = [];
+    if (shortN > 0 && sel.length > 0) {
+      var longMap = {}; sel.forEach(function(r) { longMap[r.s.c] = 1; });
+      var sCands = valid.filter(function(r) { return !longMap[r.s.c]; });
+      if (shortTSF) sCands = sCands.filter(function(r) { return r.r240 !== null && r.r240 < 0; });
+      sCands.sort(function(a, b) { return a.score - b.score; });
+      for (var ks = 0; ks < sCands.length && selS.length < shortN; ks++) {
+        var candS = sCands[ks];
+        if (selS.every(function(x) { return Math.abs(calcCorr(candS.s.c, x.s.c, scoreM)) < ct; })) selS.push(candS);
       }
-      let p0 = getPriceOnDate(DAILY[c], prevDate), p1 = getPriceOnDate(DAILY[c], curDate);
-      let r_s = (p0 && p1) ? (p1 / p0 - 1) : 0;
-      pRet += newH[c] * r_s; stockRets[c] = { ret: r_s, w: newH[c] };
+    }
+
+    var newH = {};
+    if (!sel.length) { newH = { CASH: 1.0 }; }
+    else {
+      var is1330 = capMode === '1330';
+      var lScale = is1330 ? 1.0 : 0.5, sScale = is1330 ? 0.3 : 0.5;
+      if (mode === 'rank') {
+        var ldenom = sel.length * (sel.length + 1) / 2;
+        sel.forEach(function(r, i) { newH[r.s.c] = lScale * (sel.length - i) / ldenom * exposure; });
+      } else {
+        var lw = lScale / sel.length * exposure;
+        sel.forEach(function(r) { newH[r.s.c] = lw; });
+      }
+      if (selS.length) {
+        var sdenom = mode === 'rank' ? selS.length * (selS.length + 1) / 2 : selS.length;
+        selS.forEach(function(r, i) { newH[r.s.c] = -sScale * (mode === 'rank' ? (selS.length - i) / sdenom : 1 / sdenom); });
+      }
+    }
+
+    var totalW = 0; Object.keys(newH).forEach(function(c) { totalW += newH[c]; });
+    var cashW = 1.0 - totalW;
+    if (cashW > 0.001) newH['CASH'] = cashW;
+
+    var allC = Object.keys(holdings).concat(Object.keys(newH)), seen2 = {};
+    allC.forEach(function(c) { seen2[c] = true; });
+    var tv = 0; Object.keys(seen2).forEach(function(c) { tv += Math.abs((newH[c] || 0) - (holdings[c] || 0)); });
+
+    var cr = getTNXRate(scoreM);
+    var pRet = 0, stockRets = {}, pureRet = 0;
+    var cashDivisor = (freq === "2") ? 24 : 12;
+
+    Object.keys(newH).forEach(function(c) {
+      var wt = newH[c];
+      if (c === 'CASH') {
+        var r_c = cr / cashDivisor; pRet += wt * r_c; pureRet += wt * r_c;
+        stockRets.CASH = { ret: r_c, w: wt }; return;
+      }
+      var p0 = getPriceOnDate(DAILY[c], prevM), p1 = getPriceOnDate(DAILY[c], sigM);
+      if (p0 && p1 && p0 > 0) {
+        var r_s = p1 / p0 - 1; pRet += wt * r_s; pureRet += wt * r_s;
+        stockRets[c] = { ret: r_s, w: wt };
+      } else { stockRets[c] = { ret: 0, w: wt }; }
     });
     pRet -= (tv / 2) * COST; nav *= (1 + pRet);
-    
-    let b0 = getPriceOnDate(DAILY[masterTicker], prevDate), b1 = getPriceOnDate(DAILY[masterTicker], curDate);
-    if (b0 && b1) bNav *= (b1 / b0);
 
-    records.push({ month: curDate, nav, bNav, holdings: { ...newH }, pRet, hurdle, stockRets });
-    holdings = { ...newH };
+    var driftedH = {};
+    Object.keys(newH).forEach(function(c) { driftedH[c] = newH[c] * (1 + (stockRets[c] ? stockRets[c].ret : 0)) / (1 + pureRet); });
+
+    var b0 = getBench(prevM), b1 = getBench(sigM);
+    if (b0 && b1 && b0 > 0) bNav *= (1 + b1 / b0 - 1);
+
+    var hCopy = {}; Object.keys(newH).forEach(function(k) { hCopy[k] = newH[k]; });
+    records.push({ month: sigM, nav: nav, bNav: bNav, holdings: hCopy, pRet: pRet, hurdle: hurdle, stockRets: stockRets });
+    holdings = driftedH;
   }
-  return records;
+  return records.length >= 6 ? records : null;
 }
 
-// 8. 視覺化渲染與匯出
-function renderBT(records, init, mode) {
+// 9. UI 渲染、報告匯出與診斷 (完全恢復 V1.8)
+function kpi(records,init){
+  var last=records[records.length-1];
+  var yrs=(new Date(last.month) - new Date(records[0].month))/(365.25*86400000);
+  var tr=last.nav/init-1,cagr=yrs>0?Math.pow(1+Math.max(tr,-0.999),1/yrs)-1:0;
+  var pk=init,mdd=0;
+  records.forEach(function(r){if(r.nav>pk)pk=r.nav;var dd=(r.nav-pk)/pk;if(dd<mdd)mdd=dd;});
+  var rets=records.map(function(r){return r.pRet;});
+  var avg=rets.reduce(function(a,b){return a+b;},0)/rets.length;
+  var std=Math.sqrt(rets.reduce(function(a,b){return a+(b-avg)*(b-avg);},0)/rets.length)*Math.sqrt(12)||1;
+  return{cagr:cagr,mdd:mdd,sharpe:(cagr-0.015)/std,nav:last.nav};
+}
+
+function runBT(){
+  if(!CACHE_BUILT){alert('Fetch data first');return;}
+  SKIP_MO=!!($('btSkipMo')&&$('btSkipMo').checked);
+  CORR_WIN=parseInt($('corrW')?$('corrW').value:'24')||24;
+  sl('btLog','Calculating...',null);showL('Backtesting...');
+  setTimeout(async function(){
+    try{
+      if(CACHE_SKIP_MO!==SKIP_MO){await buildCache();}
+      var mh=parseInt($('btH')?$('btH').value:'3')||3;
+      var mode=getWeightMode(),init=gv('btCap')||100000;
+      var records=runBTcore(mh,mode);
+      if(!records){alert('Not enough data');hideL();return;}
+      BT_RESULT={records:records,initial:init,mode:mode,mh:mh};
+      renderBT(records,init,mode);
+      sl('btLog','Done: '+records.length+' periods ('+records[0].month+' - '+records[records.length-1].month+')',true);
+    }catch(err){sl('btLog','Error: '+err.message,false);console.error(err);}
+    finally{hideL();}
+  },80);
+}
+
+function runCompare(){
+  if(!CACHE_BUILT){alert('Fetch data first');return;}
+  SKIP_MO=!!($('btSkipMo')&&$('btSkipMo').checked);
+  CORR_WIN=parseInt($('corrW')?$('corrW').value:'24')||24;
+  var maxN=parseInt($('btH')?$('btH').value:'5')||5,mode=getWeightMode();
+  sl('btLog','Comparing N=1 to '+maxN+'...',null);showL('Comparing...');
+  setTimeout(async function(){
+    try{
+      if(CACHE_SKIP_MO!==SKIP_MO){await buildCache();}
+      var init=gv('btCap')||100000,results=[];
+      for(var n=1;n<=maxN;n++){var recs=runBTcore(n,mode);if(recs)results.push({n:n,recs:recs,k:kpi(recs,init)});}
+      if(!results.length){alert('No results');hideL();return;}
+      renderCompare(results,init,mode);
+      sl('btLog','Compare done: N=1~'+maxN+' ('+mode+')',true);
+    }catch(err){sl('btLog','Error: '+err.message,false);console.error(err);}
+    finally{hideL();}
+  },80);
+}
+
+var CMP_COLORS=['#ff6b9d','#a78bfa','#00d4aa','#ffb830','#4d9fff','#00e5a0','#ff4d6d','#7eb8ff'];
+function renderCompare(results,init,mode){
   $('btRes').classList.remove('hidden');
-  let last = records[records.length - 1];
-  let yrs = (new Date(last.month) - new Date(records[0].month)) / (365.25 * 86400000);
-  let tr = last.nav / init - 1, cagr = yrs > 0 ? (last.nav / init) ** (1 / yrs) - 1 : 0;
-  let btr = last.bNav / init - 1, bcagr = yrs > 0 ? (last.bNav / init) ** (1 / yrs) - 1 : 0;
-  
-  let pk = init, mdd = 0;
-  records.forEach(r => { if (r.nav > pk) pk = r.nav; let dd = (r.nav - pk) / pk; if (dd < mdd) mdd = dd; });
-
-  $('btMetrics').innerHTML = `
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <div class="card" style="border-top:3px solid var(--tw)"><div class="ct">V2.0 Strategy</div>
-        <div class="mr"><span>Final NAV</span><span class="mv wh">$${Math.round(last.nav).toLocaleString()}</span></div>
-        <div class="mr"><span>CAGR</span><span class="mv tg">${(cagr * 100).toFixed(2)}%</span></div>
-        <div class="mr"><span>MDD</span><span class="mv tr">${(mdd * 100).toFixed(2)}%</span></div>
-      </div>
-      <div class="card" style="border-top:3px solid var(--mu)"><div class="ct">Benchmark (Index)</div>
-        <div class="mr"><span>CAGR</span><span class="mv">${(bcagr * 100).toFixed(2)}%</span></div>
-        <div class="mr"><span>Alpha</span><span class="mv tg">${((cagr - bcagr) * 100).toFixed(2)}pp</span></div>
-      </div>
-    </div>`;
-
-  if (CHART.n) CHART.n.destroy();
-  CHART.n = new Chart($('navC').getContext('2d'), {
-    type: 'line',
-    data: {
-      labels: records.map(r => r.month),
-      datasets: [
-        { label: 'Strategy', data: records.map(r => r.nav), borderColor: '#ff6b9d', borderWidth: 2, pointRadius: 0 },
-        { label: 'Benchmark', data: records.map(r => r.bNav), borderColor: '#3d4a66', borderWidth: 1, pointRadius: 0 }
-      ]
-    },
-    options: { responsive: true, maintainAspectRatio: false, scales: { y: { type: 'logarithmic' } } }
+  var fmt=function(v,p,pl){return(pl&&v>=0?'+':'')+(p?(v*100).toFixed(2)+'%':v.toFixed(2));};
+  var html='<div class="tw-wrap" style="margin-bottom:10px"><table><thead><tr>'
+  +'<th>N</th><th>Weight</th><th>CAGR</th><th>MDD</th><th>Sharpe</th><th>Final NAV</th></tr></thead><tbody>';
+  results.forEach(function(res,i){
+    var k=res.k;
+    html+='<tr><td class="mono" style="font-weight:700;color:'+CMP_COLORS[i%CMP_COLORS.length]+'">'+res.n+'</td>'
+    +'<td style="font-size:10px;color:var(--mu)">'+(mode==='rank'?'Rank':'Equal')+'</td>'
+    +'<td class="mono" style="color:'+(k.cagr>=0?'var(--gr)':'var(--re)')+'">'+fmt(k.cagr,true,true)+'</td>'
+    +'<td class="mono" style="color:var(--re)">'+fmt(k.mdd,true)+'</td>'
+    +'<td class="mono" style="color:'+(k.sharpe>=1?'var(--gr)':k.sharpe>=0?'var(--ye)':'var(--re)')+'">'+k.sharpe.toFixed(2)+'</td>'
+    +'<td class="mono" style="color:var(--wh)">$'+Math.round(k.nav).toLocaleString()+'</td></tr>';
   });
-
-  $('btBody').innerHTML = records.slice().reverse().map(r => `
-    <tr>
-      <td class="mono">${r.month}</td>
-      <td style="font-size:10px">${Object.keys(r.holdings).map(k => `<span class="bdg">${k}</span>`).join('')}</td>
-      <td class="mono">${(r.hurdle*100).toFixed(1)}%</td>
-      <td class="mono ${r.pRet>=0?'tg':'tr'}">${(r.pRet*100).toFixed(2)}%</td>
-      <td class="mono">$${Math.round(r.nav).toLocaleString()}</td>
-      <td class="mono">$${Math.round(r.bNav).toLocaleString()}</td>
-      <td class="mono">${((r.pRet - (r.bNav/records[records.indexOf(r)-1]?.bNav-1||0))*100).toFixed(2)}%</td>
-    </tr>`).join('');
+  html+='</tbody></table></div>';$('btMetrics').innerHTML=html;
+  $('chartArea').style.display='block';$('btnChart').textContent='Hide Charts';
+  if(CHART.n)CHART.n.destroy();if(CHART.d){CHART.d.destroy();CHART.d=null;}
+  var labels=results[0].recs.map(function(r){return r.month;});
+  var datasets=results.map(function(res,i){return{label:'N='+res.n,data:res.recs.map(function(r){return r.nav;}),borderColor:CMP_COLORS[i%CMP_COLORS.length],borderWidth:2,pointRadius:0};});
+  datasets.push({label:'TAIEX',data:results[0].recs.map(function(r){return r.bNav;}),borderColor:'#3d4a66',borderWidth:1,pointRadius:0});
+  var sc={x:{ticks:{color:'#6b7a99',maxTicksLimit:12},grid:{color:'#1a2030'}},y:{ticks:{color:'#6b7a99'},grid:{color:'#1a2030'}}};
+  var opt={responsive:true,maintainAspectRatio:false,interaction:{intersect:false,mode:'index'},animation:{duration:200},plugins:{legend:{labels:{color:'#6b7a99',boxWidth:10,font:{size:11}}}}};
+  CHART.n=new Chart($('navC').getContext('2d'),{type:'line',data:{labels:labels,datasets:datasets},options:Object.assign({},opt,{scales:Object.assign({},sc,{y:Object.assign({},sc.y,{type:'logarithmic'})})})});
+  $('btBody').innerHTML='<tr><td colspan="7" style="text-align:center;color:var(--mu);padding:12px;font-size:12px">Run single backtest to see monthly holdings detail.</td></tr>';
 }
 
-// 檔案與工具 (完整恢復)
-function dlJson() { dlBlob(new Blob([JSON.stringify({DAILY,BENCH_MONTHLY,TNX_MONTHLY})], {type:'application/json'}), `Momentum_Backup.json`); }
-function dlOHLCV() {
-  let rows = ['code,date,o,h,l,c,v'];
-  Object.keys(DAILY).forEach(k => DAILY[k].forEach(d => rows.push(`${k},${d.date},${d.o},${d.h},${d.l},${d.c},${d.v}`)));
-  dlText(rows.join('\n'), `OHLCV_Data.csv`);
+function renderBT(records,init,mode){
+  var recs=records;$('btRes').classList.remove('hidden');
+  var last=recs[recs.length-1];
+  var yrs=(new Date(last.month) - new Date(recs[0].month))/(365.25*86400000);
+  var tr=last.nav/init-1,cagr=yrs>0?Math.pow(1+Math.max(tr,-0.999),1/yrs)-1:0;
+  var btr=last.bNav/init-1,bcagr=yrs>0?Math.pow(1+Math.max(btr,-0.999),1/yrs)-1:0;
+  var pk=init,mdd=0;
+  recs.forEach(function(r){if(r.nav>pk)pk=r.nav;var dd=(r.nav-pk)/pk;if(dd<mdd)mdd=dd;});
+  var rets=recs.map(function(r){return r.pRet;});
+  var avg=rets.reduce(function(a,b){return a+b;},0)/rets.length;
+  var std=Math.sqrt(rets.reduce(function(a,b){return a+(b-avg)*(b-avg);},0)/rets.length)*Math.sqrt(12)||1;
+  var sh=(cagr-0.015)/std;
+  var fmt=function(v,p,pl){return(pl&&v>=0?'+':'')+(p?(v*100).toFixed(2)+'%':v.toFixed(2));};
+  var modeLabel=mode==='rank'?'Rank-Weighted':'Equal-Weighted';
+  $('btMetrics').innerHTML='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">'
+  +'<div class="card" style="border-top:3px solid var(--tw)"><div class="ct">Strategy V2.0 ('+modeLabel+')</div>'
+  +'<div class="mr"><span>Final NAV</span><span class="mv wh">$'+Math.round(last.nav).toLocaleString()+'</span></div>'
+  +'<div class="mr"><span>Return</span><span class="mv '+(tr>=0?'tg':'tr')+'">'+fmt(tr,true,true)+'</span></div>'
+  +'<div class="mr"><span>CAGR</span><span class="mv">'+fmt(cagr,true)+'</span></div>'
+  +'<div class="mr"><span>MDD</span><span class="mv tr">'+fmt(mdd,true)+'</span></div>'
+  +'<div class="mr"><span>Sharpe</span><span class="mv tg">'+sh.toFixed(2)+'</span></div></div>'
+  +'<div class="card" style="border-top:3px solid var(--mu)"><div class="ct">TAIEX B&H</div>'
+  +'<div class="mr"><span>Return</span><span class="mv '+(btr>=0?'tg':'tr')+'">'+fmt(btr,true,true)+'</span></div>'
+  +'<div class="mr"><span>CAGR</span><span class="mv">'+fmt(bcagr,true)+'</span></div>'
+  +'<div class="mr"><span>Alpha</span><span class="mv '+((cagr-bcagr)>=0?'tg':'tr')+'">'+fmt(cagr-bcagr,true,true)+'</span></div>'
+  +'</div></div>';
+  if(CHART.n)CHART.n.destroy();if(CHART.d)CHART.d.destroy();
+  var labels=recs.map(function(r){return r.month;});
+  var sc={x:{ticks:{color:'#6b7a99',maxTicksLimit:12},grid:{color:'#1a2030'}},y:{ticks:{color:'#6b7a99'},grid:{color:'#1a2030'}}};
+  var opt={responsive:true,maintainAspectRatio:false,interaction:{intersect:false,mode:'index'},animation:{duration:200},plugins:{legend:{labels:{color:'#6b7a99',boxWidth:10,font:{size:11}}}}};
+  CHART.n=new Chart($('navC').getContext('2d'),{type:'line',data:{labels:labels,datasets:[
+    {label:'Strategy',data:recs.map(function(r){return r.nav;}),borderColor:'#ff6b9d',borderWidth:2.5,pointRadius:0},
+    {label:'TAIEX',data:recs.map(function(r){return r.bNav;}),borderColor:'#3d4a66',borderWidth:1,pointRadius:0}
+  ]},options:Object.assign({},opt,{scales:Object.assign({},sc,{y:Object.assign({},sc.y,{type:'logarithmic'})})})});
+  var mddData=[],pk2=init;
+  recs.forEach(function(r){if(r.nav>pk2)pk2=r.nav;mddData.push((r.nav-pk2)/pk2*100);});
+  CHART.d=new Chart($('ddC').getContext('2d'),{type:'line',data:{labels:labels,datasets:[
+    {label:'MDD',data:mddData,borderColor:'#ff6b9d',borderWidth:1,pointRadius:0,fill:true,backgroundColor:'rgba(255,107,157,0.08)'}
+  ]},options:Object.assign({},opt,{plugins:{legend:{display:false}},scales:sc})});
+  $('btBody').innerHTML=recs.slice().reverse().map(function(r,ri){
+    var idx2=recs.length-1-ri,pb=idx2>0?recs[idx2-1].bNav:init,prevNav=idx2>0?recs[idx2-1].nav:init;
+    var bRet=r.bNav/pb-1,ex=r.pRet-bRet;
+    var rc=r.pRet>=0?'var(--gr)':'var(--re)',ec=ex>=0?'var(--gr)':'var(--re)';
+    var holdStr=Object.keys(r.holdings).map(function(k){
+      var wt=r.holdings[k];var isShort=wt<0;
+      var isUs=!!(document.querySelector('[data-code="'+k+'"][data-tw="0"]'));
+      var col=isShort?'var(--bl)':(isUs?'var(--us)':'var(--tw)');
+      var bg=isShort?'var(--bld)':(isUs?'var(--usd)':'var(--twd)');
+      var bst=isShort?'dashed':'solid';
+      var nm=getStockName(k);
+      var pct=Math.abs(wt*100).toFixed(0)+'%';
+      var lbl=(isShort?'S ':'')+k+(nm&&nm!==k?' '+nm:'');
+      return '<span style="background:'+bg+';color:'+col+';border:1px '+bst+' '+col+';padding:1px 6px;border-radius:3px;font-size:10px;font-family:monospace;margin:1px">'+lbl+' '+pct+'</span>';
+    }).join('');
+    var summaryRow='<tr style="border-top:2px solid var(--bd)">'
+    +'<td class="mono" style="font-weight:700;vertical-align:top">'+r.month+'</td>'
+    +'<td style="vertical-align:top">'+holdStr+'</td>'
+    +'<td class="mono" style="font-size:10px;color:var(--bl);vertical-align:top">'+(r.hurdle*100).toFixed(1)+'%</td>'
+    +'<td class="mono" style="color:'+rc+';font-weight:700;vertical-align:top">'+(r.pRet>=0?'+':'')+(r.pRet*100).toFixed(2)+'%</td>'
+    +'<td class="mono" style="color:var(--tw);font-weight:700;vertical-align:top">$'+Math.round(r.nav).toLocaleString()+'</td>'
+    +'<td class="mono" style="color:var(--mu);vertical-align:top">$'+Math.round(r.bNav).toLocaleString()+'</td>'
+    +'<td class="mono" style="color:'+ec+';font-weight:700;vertical-align:top">'+(ex>=0?'+':'')+(ex*100).toFixed(2)+'pp</td></tr>';
+    var detailRows='';
+    if(r.stockRets){
+      Object.keys(r.stockRets).forEach(function(k){
+        var sr=r.stockRets[k],ret=sr.ret,w=sr.w||0,contrib=ret*w,pnl=prevNav*contrib;
+        var isShortPos=w<0;
+        var isUs=!!(document.querySelector('[data-code="'+k+'"][data-tw="0"]'));
+        var col=isShortPos?'var(--bl)':(isUs?'var(--us)':'var(--tw)');
+        var rc2=contrib>=0?'var(--gr)':'var(--re)';
+        var nm=getStockName(k);
+        var dirLabel=isShortPos?'[S] ':'';
+        var absPct=Math.abs(w*100).toFixed(0)+'%';
+        detailRows+='<tr style="background:var(--bg);opacity:0.85">'
+        +'<td style="padding:3px 8px;border-bottom:1px solid var(--bd)"></td>'
+        +'<td style="padding:3px 8px;border-bottom:1px solid var(--bd);font-family:monospace;font-size:11px;color:'+col+'">'
+        +dirLabel+k+(nm&&nm!==k?' <span style="color:var(--mu);font-size:10px">'+nm+'</span>':'')
+        +' <span style="color:var(--mu);font-size:10px">'+absPct+'</span></td>'
+        +'<td style="padding:3px 8px;border-bottom:1px solid var(--bd)"></td>'
+        +'<td class="mono" style="padding:3px 8px;border-bottom:1px solid var(--bd);font-size:11px;color:var(--mu)">'+(ret>=0?'+':'')+(ret*100).toFixed(2)+'%</td>'
+        +'<td class="mono" style="padding:3px 8px;border-bottom:1px solid var(--bd);font-size:11px;color:'+rc2+'">'+(pnl>=0?'+$':'-$')+Math.abs(Math.round(pnl)).toLocaleString()+'</td>'
+        +'<td colspan="2" style="padding:3px 8px;border-bottom:1px solid var(--bd);font-size:10px;color:'+rc2+'">contrib: '+(contrib>=0?'+':'')+(contrib*100).toFixed(2)+'%</td></tr>';
+      });
+    }
+    return summaryRow+detailRows;
+  }).join('');
 }
-function getTNXRate(dateStr) { if (!TNX_MONTHLY.length) return 0.04; let ym = dateStr.slice(0, 7); let best = null; TNX_MONTHLY.forEach(p => { if (p.date <= ym) best = p; }); return best ? best.c / 100 : 0.04; }
-function getHurdle(dateStr) { return Math.max(0, getTNXRate(dateStr) + (gv('btSpread') || 0.5) / 100); }
-function calcCorr(c1, c2, d) { return 0.5; } // 簡化版相關性，避免遞迴過重
 
-// 系統啟動
+function pct(v,d){return(v>=0?'+':'')+(v*100).toFixed(d===undefined?1:d)+'%';}
+function median(arr){if(!arr.length)return 0;var s=arr.slice().sort(function(a,b){return a-b;});var m=Math.floor(s.length/2);return s.length%2?s[m]:(s[m-1]+s[m])/2;}
+function percentile(arr,p){if(!arr.length)return 0;var s=arr.slice().sort(function(a,b){return a-b;});var i=(p/100)*(s.length-1);var lo=Math.floor(i),hi=Math.ceil(i);return s[lo]+(s[hi]-s[lo])*(i-lo);}
+
+function runRolling(){
+  if(!BT_RESULT){alert('Run backtest first');return;}
+  var recs=BT_RESULT.records,init=BT_RESULT.initial;
+  var periods=[1,2,3,5].filter(function(n){var e=$('rl'+n);return e&&e.checked;});
+  if(!periods.length){alert('Select at least one period');return;}
+  var res={};
+  periods.forEach(function(N){
+    var mo=N*12,wins=[]; // 半月情況下這裡的長度判定為近似值
+    for(var i=0;i+mo<=recs.length;i++){
+      var sub=recs.slice(i,i+mo);
+      var navS=i>0?recs[i-1].nav:init, navE=sub[sub.length-1].nav;
+      var cagr=Math.pow(navE/navS,1/N)-1;
+      var bNavS=i>0?recs[i-1].bNav:init, bNavE=sub[sub.length-1].bNav;
+      var bcagr=Math.pow(bNavE/bNavS,1/N)-1;
+      var rets=sub.map(function(r){return r.pRet;});
+      var avg=rets.reduce(function(a,b){return a+b;},0)/rets.length;
+      var variance=rets.reduce(function(a,b){return a+(b-avg)*(b-avg);},0)/rets.length;
+      var std=Math.sqrt(variance)*Math.sqrt(12);
+      var sharpe=std>0?(cagr-0.015)/std:0;
+      var peak=navS,mdd=0;
+      sub.forEach(function(r){if(r.nav>peak)peak=r.nav;var dd=(r.nav-peak)/peak;if(dd<mdd)mdd=dd;});
+      wins.push({cagr:cagr,bcagr:bcagr,std:std,sharpe:sharpe,mdd:mdd});
+    }
+    res[N]=wins;
+  });
+  renderRolling(res,periods);
+}
+
+function renderRolling(res,periods){
+  var el=$('rollingRes');if(!el)return;
+  el.classList.remove('hidden');
+  var fmt=function(v,d){return(v>=0?'+':'')+(v*100).toFixed(d===undefined?1:d)+'%';};
+  var fmtN=function(v,d){return v.toFixed(d===undefined?2:d);};
+  var gc=function(v){return v>=0?'var(--gr)':'var(--re)';};
+  var html='<div class="card"><div class="ct">&#x6EFE;&#x52D5;&#x5831;&#x916C;&#x5206;&#x6790; (CAGR)</div>';
+  periods.forEach(function(N){
+    var ws=res[N];if(!ws||!ws.length)return;
+    var cagrs=ws.map(function(w){return w.cagr;});
+    var bcagrs=ws.map(function(w){return w.bcagr;});
+    var stds=ws.map(function(w){return w.std;});
+    var sharpes=ws.map(function(w){return w.sharpe;});
+    var mdds=ws.map(function(w){return w.mdd;});
+    var winRate=cagrs.filter(function(v){return v>0;}).length/cagrs.length;
+    var beatRate=ws.filter(function(w){return w.cagr>w.bcagr;}).length/ws.length;
+    html+='<div style="margin-bottom:14px"><div style="font-size:11px;font-weight:700;color:var(--tw);margin-bottom:6px">'+N+' 年 ('+ws.length+' 窗口)</div><div class="tw-wrap" style="max-height:none"><table><thead><tr><th>指標</th><th>中位</th><th>平均</th><th>P10</th><th>P90</th><th>勝率</th><th>超TAIEX</th></tr></thead><tbody>';
+    var rows=[['CAGR',cagrs,true],['年化標準差',stds,false],['Sharpe',sharpes,false],['MDD',mdds,true]];
+    rows.forEach(function(row){
+      var label=row[0],arr=row[1],isCagr=row[2];
+      var med=median(arr),avg=arr.reduce(function(a,b){return a+b;},0)/arr.length;
+      var p10=percentile(arr,10),p90=percentile(arr,90);
+      var isPct=label!=='Sharpe';
+      var f=function(v){return isPct?fmt(v,1):fmtN(v,2);};
+      html+='<tr><td style="color:var(--mu);font-size:10px">'+label+'</td><td class="mono" style="color:'+gc(med)+'">'+f(med)+'</td><td class="mono" style="color:'+gc(avg)+'">'+f(avg)+'</td><td class="mono" style="color:'+gc(p10)+'">'+f(p10)+'</td><td class="mono" style="color:'+gc(p90)+'">'+f(p90)+'</td>';
+      if(isCagr&&label==='CAGR'){ html+='<td class="mono" style="color:var(--gr)">'+(winRate*100).toFixed(0)+'%</td><td class="mono" style="color:var(--ye)">'+(beatRate*100).toFixed(0)+'%</td>'; }else{ html+='<td></td><td></td>'; }
+      html+='</tr>';
+    });
+    var bmed=median(bcagrs),bavg=bcagrs.reduce(function(a,b){return a+b;},0)/bcagrs.length,bp10=percentile(bcagrs,10),bp90=percentile(bcagrs,90),bwin=bcagrs.filter(function(v){return v>0;}).length/bcagrs.length;
+    html+='<tr style="border-top:1px solid var(--bhi)"><td style="color:var(--mu);font-size:10px">TAIEX CAGR</td><td class="mono" style="color:'+gc(bmed)+'">'+fmt(bmed,1)+'</td><td class="mono" style="color:'+gc(bavg)+'">'+fmt(bavg,1)+'</td><td class="mono" style="color:'+gc(bp10)+'">'+fmt(bp10,1)+'</td><td class="mono" style="color:'+gc(bp90)+'">'+fmt(bp90,1)+'</td><td class="mono" style="color:var(--mu)">'+(bwin*100).toFixed(0)+'%</td><td></td></tr></tbody></table></div></div>';
+  });
+  html+='</div>'; el.innerHTML=html;
+}
+
+function toggleCharts(btn){
+  var area=$('chartArea');if(!area)return;
+  var hidden=area.style.display==='none';
+  area.style.display=hidden?'block':'none';
+  btn.textContent=hidden?'Hide Charts':'Show Charts (NAV / MDD)';
+  if(hidden&&CHART.n){CHART.n.resize();if(CHART.d)CHART.d.resize();}
+}
+
+function dlJson(){
+  if(!Object.keys(DAILY).length){sl('dlLog','No data',false);return;}
+  var obj={ts:new Date().toISOString(),DAILY,MONTHLY,WEEKLY,BENCH_MONTHLY,TNX_MONTHLY};
+  dlBlob(new Blob([JSON.stringify(obj)],{type:'application/json'}),'V2_Experimental_'+new Date().toISOString().slice(0,10)+'.json');
+  sl('dlLog','JSON downloaded',true);
+}
+
+function dlOHLCV(){
+  var rows=['type,code,date,open,high,low,close,volume'];
+  Object.keys(DAILY).forEach(function(k){DAILY[k].forEach(function(w){rows.push('D,'+k+','+w.date+','+w.o+','+w.h+','+w.l+','+w.c+','+w.v);});});
+  dlText(rows.join('\n'),'V2_Daily_OHLCV_'+new Date().toISOString().slice(0,10)+'.csv','text/csv;charset=utf-8');
+  sl('dlLog','OHLCV CSV downloaded',true);
+}
+
+function dlMonthly(){
+  var rows=['code,date,close'];
+  Object.keys(MONTHLY).forEach(function(k){MONTHLY[k].forEach(function(m){rows.push(k+','+m.date+','+m.c);});});
+  BENCH_MONTHLY.forEach(function(m){rows.push('^TWII,'+m.date+','+m.c);});
+  TNX_MONTHLY.forEach(function(m){rows.push('^TNX,'+m.date+','+m.c);});
+  dlText(rows.join('\n'),'V2_Monthly_'+new Date().toISOString().slice(0,10)+'.csv','text/csv;charset=utf-8');
+  sl('dlLog','Monthly CSV downloaded',true);
+}
+
+async function upJson(el){
+  var file=el.files[0];if(!file)return;sl('dlLog','Loading '+file.name+'...',null);
+  try{
+    var text=await file.text();var obj=JSON.parse(text);
+    if(!obj.DAILY){sl('dlLog','Error: no DAILY field (V2 requires DAILY)',false);return;}
+    DAILY=obj.DAILY||{};MONTHLY=obj.MONTHLY||{};WEEKLY=obj.WEEKLY||{};
+    BENCH_MONTHLY=obj.BENCH_MONTHLY||[];TNX_MONTHLY=obj.TNX_MONTHLY||[];
+    updFetchStat();updTNX();await buildCache();sl('dlLog','Loaded! Ready to calculate.',true);
+  }catch(err){sl('dlLog','Error: '+err.message,false);}
+  el.value='';
+}
+
+async function clearAndReset() {
+  if (!confirm('Clear all cached data and IndexedDB?')) return;
+  await indexedDB.deleteDatabase('FearlessConsoleDB');
+  WEEKLY={};MONTHLY={};DAILY={};BENCH_MONTHLY=[];TNX_MONTHLY=[];
+  CACHE_BUILT=false;CACHE_TS=null;RAW_SCORES={};
+  sl('dlLog','DB cleared. Please run Fetch All.',true);
+  updFetchStat();updCacheSt();
+}
+
+function debugDataLen() {
+  var keys = Object.keys(DAILY);
+  var msg = 'DAILY stocks: ' + keys.length;
+  if (keys.length) {
+    msg += '\n' + keys[0] + ': ' + DAILY[keys[0]].length + ' days';
+    msg += '\n' + keys[keys.length-1] + ': ' + DAILY[keys[keys.length-1]].length + ' days';
+  }
+  msg += '\nBENCH: ' + BENCH_MONTHLY.length + ' months';
+  msg += '\nRAW_SCORES keys: ' + Object.keys(RAW_SCORES).length;
+  alert(msg);
+}
+
+function checkDataHealth() {
+  const stocks = getEnabledStocks();
+  const now = new Date();
+  let staleNum = 0, totalDelay = 0, html = '';
+  stocks.forEach(s => {
+      const data = DAILY[s.c];
+      let delay = 999, lastD = '無資料';
+      if (data && data.length > 0) {
+          lastD = data[data.length - 1].date;
+          delay = Math.floor((now - new Date(lastD)) / (1000 * 60 * 60 * 24));
+      }
+      const isStale = delay > 5;
+      if (isStale) staleNum++;
+      if (delay !== 999) totalDelay += delay;
+      const statusLabel = isStale ? `<span style="color:var(--re)">✘ 需更新</span>` : `<span style="color:var(--te)">✔ 正常</span>`;
+      html += `<tr><td>${s.tw ? '🇹🇼 台股' : '🇺🇸 美股'}</td><td class="mono">${s.c}</td><td class="mono">${lastD}</td><td class="mono">${delay === 999 ? '∞' : delay + 'd'}</td><td>${statusLabel}</td></tr>`;
+  });
+  $('healthBody').innerHTML = html || '<tr><td colspan="5">無啟用中的標的</td></tr>';
+  $('staleCount').textContent = staleNum;
+  $('avgDelay').textContent = stocks.length ? (totalDelay / stocks.length).toFixed(1) : 0;
+}
+
+function dlBtCsv(){
+  if(!BT_RESULT){sl('btLog','Run backtest first',false);return;}
+  var recs=BT_RESULT.records,init=BT_RESULT.initial,rows=['month,holdings,hurdle%,return%,nav,taiex,alpha%'];
+  recs.forEach(function(r,i){
+    var pb=i>0?recs[i-1].bNav:init;var ex=r.pRet-(r.bNav/pb-1);
+    var hold=Object.keys(r.holdings).map(function(k){
+      var nm=getStockName(k);
+      return k+(nm&&nm!==k?'('+nm+')':'')+(r.holdings[k]<0.99?' '+(r.holdings[k]*100).toFixed(0)+'%':'');
+    }).join('+');
+    rows.push([r.month,hold,(r.hurdle*100).toFixed(2),(r.pRet*100).toFixed(3),Math.round(r.nav),Math.round(r.bNav),(ex*100).toFixed(3)].join(','));
+  });
+  dlText(rows.join('\n'),'V2_Backtest_'+new Date().toISOString().slice(0,10)+'.csv','text/csv;charset=utf-8');
+}
+
+// 實時信號與排名系統
+async function calcSignal() {
+  if (!CACHE_BUILT) { alert('Fetch data first'); return; }
+  SKIP_MO = !!($('btSkipMo') && $('btSkipMo').checked);
+  CORR_WIN = parseInt($('corrW') ? $('corrW').value : '24') || 24;
+  if (CACHE_SKIP_MO !== SKIP_MO) { await buildCache(); }
+  
+  var stocks = getEnabledStocks().filter(function(s) { return RAW_SCORES[s.c]; });
+  if (!stocks.length) { alert('No cached data'); return; }
+  
+  var latestDate = Object.keys(RAW_SCORES[stocks[0].c]).sort().pop();
+  var hurdle = getHurdle(latestDate);
+  var scores = calcAllScores(latestDate);
+  var valid = scores.filter(function(r) { return r.score !== null; });
+  valid.sort(function(a, b) { return b.score - a.score; });
+
+  var tsPass = valid.filter(function(r) { return r.r240 !== null && r.r240 > hurdle; });
+  var ct = gv('corrT') || 0.75, mh = parseInt($('btH') ? $('btH').value : '3') || 3;
+  var sel = [];
+  var rejectedByCorr = {};
+
+  for (var i = 0; i < tsPass.length; i++) {
+    var cand = tsPass[i];
+    var conflict = null;
+    for (var x of sel) {
+      if (Math.abs(calcCorr(cand.s.c, x.s.c, latestDate)) >= ct) { conflict = x.s.c; break; }
+    }
+    if (!conflict && sel.length < mh) { sel.push(cand); } 
+    else if (conflict) { rejectedByCorr[cand.s.c] = conflict; }
+  }
+  renderSig(sel, valid.slice(-3).reverse(), valid, latestDate, hurdle);
+  renderST(valid, hurdle, sel.map(s => s.s.c), rejectedByCorr);
+}
+
+function renderSig(sel,wk,all,date,hurdle){
+  var zf=function(v){return v!==null?(v>=0?'+':'')+v.toFixed(2):'-';};
+  var pf=function(v){return v!==null?(v>=0?'+':'')+(v*100).toFixed(1)+'%':'-';};
+  var tnx=getTNXRate(date);
+  var html='<div style="font-size:11px;color:var(--mu);margin-bottom:9px">Date: <b style="color:var(--tw)">'+date+'</b>'
+  +' | ^TNX: <b style="color:var(--bl)">'+(tnx*100).toFixed(2)+'%</b>'
+  +' | Hurdle: <b style="color:var(--ye)">'+(hurdle*100).toFixed(2)+'%</b></div>';
+  html+='<div style="font-size:12px;font-weight:700;color:var(--tw);margin-bottom:6px">Top '+sel.length+'</div><div class="sg">';
+  sel.forEach(function(r,rk){
+    var isUs=!r.s.tw;var col=isUs?'var(--us)':'var(--tw)';var rbg=isUs?'var(--usd)':'var(--twd)';
+    html+='<div class="scard"><div class="shdr"><div><div class="scode" style="color:'+col+'">'+r.s.c+'</div>'
+    +'<div class="sname">'+r.s.n+'</div></div>'
+    +'<span class="srank" style="background:'+rbg+';color:'+col+';border:1px solid '+col+'">#'+(rk+1)+'</span></div>';
+    html+='<div class="sscore">'+(r.score>=0?'+':'')+r.score.toFixed(2)+'</div><div class="sbars">';
+    [['Mom',r.zm,'var(--tw)'],['Bias',r.zb,'var(--bl)'],['Slope',r.zs,'var(--te)'],['Vol',r.zv,'var(--ye)'],['Kbar',r.zk,'var(--ac)']].forEach(function(b){
+      if(b[1]===null)return;var w=Math.round(Math.min(100,Math.abs(b[1])*25));
+      html+='<div class="sbrow"><span style="width:32px">'+b[0]+'</span>'
+      +'<div class="sbwrap"><div class="sbfill" style="width:'+w+'%;background:'+b[2]+'"></div></div>'
+      +'<span style="width:36px;text-align:right;font-family:monospace">'+zf(b[1])+'</span></div>';
+    });
+    html+='</div><div style="margin-top:5px;font-size:10px;color:var(--mu);font-family:monospace">'
+    +'R240:'+pf(r.r240)+'</div></div>';
+  });
+  html+='</div>';
+  if(!sel.length)html+='<div style="color:var(--ye);font-size:12px;margin-bottom:9px">No stocks pass TS - hold cash</div>';
+  html+='<div style="font-size:12px;font-weight:700;color:var(--re);margin:9px 0 6px">Weakest 3</div><div class="sg">';
+  wk.forEach(function(r,rk){
+    html+='<div class="scard wk"><div class="shdr"><div><div class="scode">'+r.s.c+'</div>'
+    +'<div class="sname">'+r.s.n+'</div></div><span class="srank">W'+(rk+1)+'</span></div>'
+    +'<div class="sscore" style="color:var(--re)">'+(r.score>=0?'+':'')+r.score.toFixed(2)+'</div></div>';
+  });
+  html+='</div>';$('sigContent').innerHTML=html;
+}
+
+function renderST(all, hurdle, selectedCodes, rejectedMap) {
+  $('stCard').classList.remove('hidden');
+  var sorted = all.filter(function(r) { return r.score !== null; }).sort(function(a, b) { return b.score - a.score; });
+  var zf = function(v) { return v !== null ? (v >= 0 ? '+' : '') + v.toFixed(2) : '-'; };
+  var pf = function(v) { return v !== null ? (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%' : '-'; };
+  
+  $('stBody').innerHTML = sorted.map(function(r, i) {
+    var ts = r.r240 !== null && r.r240 > hurdle;
+    var isUs = !r.s.tw;
+    var isSelected = selectedCodes.includes(r.s.c);
+    var conflictWith = rejectedMap[r.s.c];
+    var statusHtml = '';
+    if (isSelected) statusHtml = '<span style="color:var(--gr);font-weight:700">★ 已選入</span>';
+    else if (conflictWith) statusHtml = `<span style="color:var(--mu);font-size:10px">🚫 相關性 > ${conflictWith}</span>`;
+    else if (!ts) statusHtml = '<span style="color:var(--re)">TS 淘汰</span>';
+
+    return '<tr><td class="mono" style="color:var(--mu)">' + (i + 1) + '</td>'
+    + '<td class="mono" style="font-weight:700;color:' + (isUs ? 'var(--us)' : 'var(--tw)') + '">' + r.s.c + '</td>'
+    + '<td>' + r.s.n + '</td>'
+    + '<td style="font-size:11px">' + statusHtml + '</td>'
+    + '<td class="mono" style="font-weight:700;color:' + (r.score >= 0 ? 'var(--gr)' : 'var(--re)') + '">' + zf(r.score) + '</td>'
+    + '<td class="mono">' + zf(r.zm) + '</td><td class="mono">' + zf(r.zb) + '</td>'
+    + '<td class="mono">' + zf(r.zs) + '</td><td class="mono">' + zf(r.zv) + '</td><td class="mono">' + zf(r.zk) + '</td>'
+    + '<td class="mono">' + pf(r.r240) + '</td>'
+    + '<td>' + (ts ? '<span style="color:var(--gr)">Y</span>' : '<span style="color:var(--re)">N</span>') + '</td></tr>';
+  }).join('');
+}
+
+// 系統初始化
 window.onload = async function() {
   initGroupToggles();
-  const hasData = await loadFromDB();
-  sl('fetchLog', hasData ? '資料已自動從資料庫恢復。' : '歡迎，請執行抓取全部。', true);
-};
-
-async function fetchAll() {
-  const stocks = getEnabledStocks();
-  if(!stocks.length) return alert('請選擇標的');
-  showL('抓取 V2.0 資料中...'); $('fetchProg').classList.remove('hidden');
-  for (let i = 0; i < stocks.length; i++) {
-    try { DAILY[stocks[i].c] = await fetchOHLCV(stocks[i], '1d', '5y'); updFetchStat(); } catch(e) {}
-    $('fetchFill').style.width = `${((i+1)/stocks.length)*100}%`;
-    await new Promise(r => setTimeout(r, 600));
+  var hasData = await loadFromDB();
+  if (!hasData) {
+    console.log('No local data found in IndexedDB.');
   }
-  try {
-    TNX_MONTHLY = await fetchOHLCV({c:'^TNX',tw:false}, '1mo', '10y');
-    BENCH_MONTHLY = await fetchOHLCV({c:'^TWII',tw:true}, '1mo', '10y');
-  } catch(e) {}
-  hideL(); $('fetchProg').classList.add('hidden');
-  await buildCache(); await saveAllToDB();
-}
-
-function runBT() {
-  let mode = document.getElementById('wtRank').checked ? 'rank' : 'eq';
-  let res = runBTcore(gv('btH'), mode);
-  if(res) { BT_RESULT = {records:res, initial:gv('btCap')}; renderBT(res, gv('btCap'), mode); }
-}
-
-function getEnabledStocks() { return Array.from(document.querySelectorAll('.sc.act')).map(el => ({ c: el.getAttribute('data-code'), tw: el.getAttribute('data-tw') === '1' })); }
-function updCacheSt() { $('cacheTxt').textContent = CACHE_BUILT ? `Cache OK (${CACHE_TS.slice(11,16)})` : 'Cache: None'; }
-function switchTab(id, btn) { document.querySelectorAll('.tab').forEach(t => t.classList.remove('active')); document.querySelectorAll('.panel').forEach(p => p.classList.remove('active')); btn.classList.add('active'); $(`panel-${id}`).classList.add('active'); }
-function toggleStock(code) { document.querySelector(`[data-code="${code}"]`).classList.toggle('act'); updAllCounts(); }
-function updAllCounts() { document.querySelectorAll('.ib').forEach(ib => { let all = ib.querySelectorAll('.sc').length, act = ib.querySelectorAll('.sc.act').length; let ih = ib.previousElementSibling; if(ih) ih.querySelector('.ic').textContent = `${act}/${all}`; }); }
-function initGroupToggles() { document.querySelectorAll('.ih').forEach(h => h.onclick = () => h.nextElementSibling.classList.toggle('col')); }
-function selectTW(isOn) { document.querySelectorAll('.sc[data-tw="1"]').forEach(el => isOn ? el.classList.add('act') : el.classList.remove('act')); updAllCounts(); }
-function selectAll() { document.querySelectorAll('.sc').forEach(el => el.classList.add('act')); updAllCounts(); }
-function selectNone() { document.querySelectorAll('.sc').forEach(el => el.classList.remove('act')); updAllCounts(); }
-function getStockName(code) { return code; }
+};
 </script>
+
 
 </body>
 </html>
