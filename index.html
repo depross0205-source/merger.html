@@ -617,15 +617,33 @@ tr:hover{background:var(--sf2)}
         </label>
       </div>
       <div class="fi"><label>Signal Lag</label>
-        <div style="display:flex;gap:10px;margin-top:6px;font-size:12px">
-          <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
-            <input type="radio" name="lagMode" id="lagT1" value="1" checked style="width:14px;accent-color:var(--tw)"> t-1
-          </label>
-          <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
-            <input type="radio" name="lagMode" id="lagT2" value="2" style="width:14px;accent-color:var(--tw)"> t-2
-          </label>
-        </div>
-      </div>
+  <div style="display:flex;gap:10px;margin-top:6px;font-size:12px">
+    <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="lagMode" id="lagT1" value="1" checked style="width:14px;accent-color:var(--tw)"> t-1</label>
+    <label style="display:flex;align-items:center;gap:4px;cursor:pointer"><input type="radio" name="lagMode" id="lagT2" value="2" style="width:14px;accent-color:var(--tw)"> t-2</label>
+  </div>
+</div>
+<!-- V2.0 新增實驗性控制項 -->
+<div class="fi"><label>回測頻率</label>
+  <select id="btFreq">
+    <option value="1">全月 (每月1號)</option>
+    <option value="2">半月 (1號 & 15號)</option>
+  </select>
+</div>
+<div class="fi"><label>大盤風控 (Regime)</label>
+  <select id="btRegime">
+    <option value="off">Off</option>
+    <option value="on">On (0050/SPY &lt; 60MA)</option>
+  </select>
+</div>
+<div class="fi"><label>曝光度 (Regime)</label>
+  <input type="number" id="btRegimeExp" value="50" min="0" max="100">
+</div>
+<div class="fi"><label>個股強勢濾網</label>
+  <select id="btIndExit">
+    <option value="off">Off</option>
+    <option value="on">On (破60MA且均線向下)</option>
+  </select>
+</div>
 
     </div>
     <div style="display:flex;gap:8px;margin-top:8px">
@@ -657,7 +675,9 @@ tr:hover{background:var(--sf2)}
 <script>
 var WEEKLY={},MONTHLY={},DAILY={},BENCH_MONTHLY=[],TNX_MONTHLY=[];
 var RAW_SCORES={},BT_RESULT=null,CHART={},CACHE_BUILT=false,CACHE_TS=null,SKIP_MO=false,CACHE_SKIP_MO=false,CORR_WIN=24;
-var N_TW=13,N_US=50;
+var N_TREND=60;
+const MOM_CONSISTENCY_MULT = 1.2;
+var REBAL_FREQ = "1";   // 由 UI 動態更新
   function checkDataHealth() {
     const stocks = getEnabledStocks();
     const now = new Date();
@@ -1142,41 +1162,46 @@ function momZ(mo,idx,n){
   var std=Math.sqrt(rets.reduce(function(a,b){return a+(b-avg)*(b-avg);},0)/rets.length);
   return std>0?ret/std:null;
 }
-function rawMom(mo,idx,skip){
-  var ri=skip?idx-1:idx;if(ri<1)return null;
-  var z12=momZ(mo,ri,12),z6=momZ(mo,ri,6),z3=momZ(mo,ri,3);
-  if(z12===null||z6===null||z3===null)return null;
-  return 0.5*z12+0.3*z6+0.2*z3;
+function rawMom(daily, idx) {
+  if (idx < 240) return null;
+  let z240 = momZ(daily, idx, 240);
+  let z120 = momZ(daily, idx, 120);
+  let z60  = momZ(daily, idx, 60);
+  if (z240 === null || z120 === null || z60 === null) return null;
+  let score = 0.5*z240 + 0.3*z120 + 0.2*z60;
+  if (z240 > 0 && z120 > 0 && z60 > 0) score *= MOM_CONSISTENCY_MULT;
+  return score;
 }
 function getMonthIdx(mo,yyyymm){for(var i=0;i<mo.length;i++){if(mo[i].date>yyyymm)return i;}return mo.length;}
-async function buildCache(stocks){
-  stocks=stocks||getEnabledStocks();
-  var withData=stocks.filter(function(s){return s.tw?(WEEKLY[s.c]&&MONTHLY[s.c]):(DAILY[s.c]&&MONTHLY[s.c]);});
-  if(!withData.length){updCacheSt();return;}
-  showL('Building cache...');RAW_SCORES={};
-  for(var si=0;si<withData.length;si++){
-    var s=withData[si];$('loadTxt').textContent='Cache: '+s.c+' ('+(si+1)+'/'+withData.length+')';
-    var mo=MONTHLY[s.c],bars=s.tw?WEEKLY[s.c]:DAILY[s.c],N=s.tw?N_TW:N_US;
-    if(!mo||!bars)continue;
-    RAW_SCORES[s.c]={};var allMo=mo.map(function(p){return p.date;});
-    for(var mi=13;mi<allMo.length;mi++){
-      var yyyymm=allMo[mi];var mIdx=getMonthIdx(mo,yyyymm);
-      var cut=bars.filter(function(b){return b.date<=yyyymm+'-31';});
-      var rm=rawMom(mo,mIdx,SKIP_MO);
-      var rb=cut.length>=N?calcBias(cut,N):null;
-      var rs=cut.length>=N+3?calcSlope(cut,N):null;
-      var rv=cut.length>=N+1?calcVol(cut,N):null;
-      var rk=cut.length>=N?calcKbar(cut,N):null;
-      var pn=mo[mIdx-1]?mo[mIdx-1].c:null;
-      var r12=mIdx>=13&&mo[mIdx-13]?pn/mo[mIdx-13].c-1:null;
-      var r6=mIdx>=7&&mo[mIdx-7]?pn/mo[mIdx-7].c-1:null;
-      var r3=mIdx>=4&&mo[mIdx-4]?pn/mo[mIdx-4].c-1:null;
-      RAW_SCORES[s.c][yyyymm]={rm:rm,rb:rb,rs:rs,rv:rv,rk:rk,r12:r12,r6:r6,r3:r3};
+async function buildCache() {
+  const stocks = getEnabledStocks();
+  showL('Building V2.0 Cache (日線動能)...');
+  RAW_SCORES = {};
+  REBAL_FREQ = $('btFreq') ? $('btFreq').value : "1";
+
+  for (let s of stocks) {
+    let bars = DAILY[s.c];
+    if (!bars || bars.length < 300) continue;
+    RAW_SCORES[s.c] = {};
+    let rebalDates = getPreciseRebalanceDates(bars, REBAL_FREQ);
+    for (let d of rebalDates) {
+      let idx = bars.findIndex(b => b.date === d);
+      if (idx < 240) continue;
+      RAW_SCORES[s.c][d] = {
+        rm: rawMom(bars, idx),
+        rb: calcBias(bars.slice(0, idx+1), N_TREND),
+        rs: calcSlope(bars.slice(0, idx+1), N_TREND),
+        rv: calcVol(bars.slice(0, idx+1), N_TREND),
+        rk: calcKbar(bars.slice(0, idx+1), N_TREND),
+        r240: bars[idx].c / (bars[idx-240] ? bars[idx-240].c : 1) - 1,
+        r12: null, r6: null, r3: null
+      };
     }
-    if(si%5===4)await new Promise(function(r){setTimeout(r,0);});
   }
-  CACHE_BUILT=true;CACHE_TS=new Date().toISOString();CACHE_SKIP_MO=SKIP_MO;
-  hideL();updCacheSt();updTNX();
+  CACHE_BUILT = true;
+  CACHE_TS = new Date().toISOString();
+  hideL();
+  updCacheSt();
 }
 function updCacheSt(){
   var el=$('cacheTxt');if(!el)return;
@@ -1193,35 +1218,98 @@ function crossZ(arr,cap){
   var std=Math.sqrt(vals.reduce(function(a,b){return a+(b-mean)*(b-mean);},0)/vals.length)||1;
   return arr.map(function(v){if(v===null)return null;return Math.max(-cap,Math.min(cap,(v-mean)/std));});
 }
-function getTNXRate(yyyymm){
-  if(!TNX_MONTHLY.length)return 0.04;
-  var best=null;TNX_MONTHLY.forEach(function(p){if(p.date<=yyyymm)best=p;});
+function getTNXRate(dateStr){
+  if (!TNX_MONTHLY.length) return 0.04;
+  let yyyymm = dateStr.slice(0,7);
+  var best=null;
+  TNX_MONTHLY.forEach(function(p){ if(p.date<=yyyymm) best=p; });
   return best?(best.c/100):0.04;
 }
-function getHurdle(yyyymm){return Math.max(0,getTNXRate(yyyymm)+(gv('btSpread')||0.5)/100);}
-function calcAllScores(yyyymm){
-  var stocks=getEnabledStocks().filter(function(s){
-    var mo=MONTHLY[s.c];
-    if(!mo)return false;
-    var idx=mo.findIndex(function(p){return p.date===yyyymm;});
-    return idx>=13;
-  });
-  if(stocks.length<5)return[];
+function getHurdle(dateStr){
+  return Math.max(0, getTNXRate(dateStr) + (gv('btSpread')||0.5)/100 );
+}
+  // ==================== V2.0 Final Helper (無 Bug) ====================
+function calcMA(bars, dateStr, period) {
+  if (!bars) return null;
+  let idx = bars.findIndex(b => b.date === dateStr);
+  if (idx < period - 1) return null;
+  let sum = 0;
+  for (let i = idx - period + 1; i <= idx; i++) sum += bars[i].c;
+  return sum / period;
+}
 
-  var wM=gv('wMom')/100,wB=gv('wBias')/100,wS=gv('wSlope')/100,wV=gv('wVol')/100,wK=gv('wKbar')/100;
-  var rMs=[],rBs=[],rSs=[],rVs=[],rKs=[];
-  var infos=stocks.map(function(s){
-    var raw=RAW_SCORES[s.c][yyyymm];
-    rMs.push(raw.rm);rBs.push(raw.rb);rSs.push(raw.rs);rVs.push(raw.rv);rKs.push(raw.rk);
-    return{s:s,raw:raw};
+function getPriceOnDate(bars, dateStr) {
+  if (!bars) return null;
+  let bar = bars.find(b => b.date === dateStr);
+  return bar ? bar.c : null;
+}
+
+function getPrevWorkDay(bars, dateStr, offset = 5) {
+  if (!bars) return dateStr;
+  let idx = bars.findIndex(b => b.date === dateStr);
+  if (idx < offset) return bars[0].date;
+  return bars[idx - offset].date;
+}
+
+function isBearishRegime(bars, dateStr, period = 60) {
+  let ma = calcMA(bars, dateStr, period);
+  let price = getPriceOnDate(bars, dateStr);
+  if (!ma || !price) return false;
+  let prevDate = getPrevWorkDay(bars, dateStr, 5);
+  let prevMA = calcMA(bars, prevDate, period);
+  return price < ma && prevMA && ma < prevMA;
+}
+
+function getPreciseRebalanceDates(bars, freq) {
+  const dates = [];
+  let lastYM = "";
+  let hasHalf = false;
+  bars.forEach(bar => {
+    const ym = bar.date.slice(0, 7);
+    const day = parseInt(bar.date.slice(8, 10));
+    if (ym !== lastYM) {
+      dates.push(bar.date);
+      lastYM = ym;
+      hasHalf = false;
+    }
+    if (freq === "2" && !hasHalf && day >= 15) {
+      if (dates[dates.length - 1] !== bar.date) {
+        dates.push(bar.date);
+        hasHalf = true;
+      }
+    }
   });
-  var zMs=crossZ(rMs,99),zBs=crossZ(rBs,2),zSs=crossZ(rSs,99),zVs=crossZ(rVs,2),zKs=crossZ(rKs,99);
-  return infos.map(function(d,i){
-    var zm=zMs[i],zb=zBs[i],zs=zSs[i],zv=zVs[i],zk=zKs[i],tw=0,tt=0;
-    if(zm!==null){tw+=wM*zm;tt+=wM;}if(zb!==null){tw+=wB*zb;tt+=wB;}
-    if(zs!==null){tw+=wS*zs;tt+=wS;}if(zv!==null){tw+=wV*zv;tt+=wV;}
-    if(zk!==null){tw+=wK*zk;tt+=wK;}
-    return{s:d.s,score:tt>0.1?tw/tt:null,zm:zm,zb:zb,zs:zs,zv:zv,zk:zk,r12:d.raw.r12,r6:d.raw.r6,r3:d.raw.r3};
+  return dates;
+}
+function getHurdle(yyyymm){return Math.max(0,getTNXRate(yyyymm)+(gv('btSpread')||0.5)/100);}
+function calcAllScores(rebalDate) {
+  const stocks = getEnabledStocks().filter(s => RAW_SCORES[s.c] && RAW_SCORES[s.c][rebalDate]);
+  if (stocks.length < 5) return [];
+  const wM=gv('wMom')/100, wB=gv('wBias')/100, wS=gv('wSlope')/100, 
+        wV=gv('wVol')/100, wK=gv('wKbar')/100;
+  let rMs=[], rBs=[], rSs=[], rVs=[], rKs=[];
+  let infos = stocks.map(s => {
+    let raw = RAW_SCORES[s.c][rebalDate];
+    rMs.push(raw.rm); rBs.push(raw.rb); rSs.push(raw.rs); 
+    rVs.push(raw.rv); rKs.push(raw.rk);
+    return {s: s, raw: raw};
+  });
+  let zMs=crossZ(rMs,99), zBs=crossZ(rBs,2), zSs=crossZ(rSs,99), 
+      zVs=crossZ(rVs,2), zKs=crossZ(rKs,99);
+  return infos.map((d,i) => {
+    let tw=0, tt=0;
+    if(zMs[i]!==null){tw+=wM*zMs[i];tt+=wM;}
+    if(zBs[i]!==null){tw+=wB*zBs[i];tt+=wB;}
+    if(zSs[i]!==null){tw+=wS*zSs[i];tt+=wS;}
+    if(zVs[i]!==null){tw+=wV*zVs[i];tt+=wV;}
+    if(zKs[i]!==null){tw+=wK*zKs[i];tt+=wK;}
+    return {
+      s: d.s,
+      score: tt>0.1 ? tw/tt : null,
+      zm:zMs[i], zb:zBs[i], zs:zSs[i], zv:zVs[i], zk:zKs[i],
+      r12: d.raw.r240,
+      r6: null, r3: null
+    };
   });
 }
 function calcCorr(c1,c2,yyyymm,n){
@@ -1241,46 +1329,18 @@ function calcCorr(c1,c2,yyyymm,n){
   return num/Math.sqrt((d1*d2)||1);
 }
 async function calcSignal() {
-  if (!CACHE_BUILT) { alert('Fetch data first'); return; }
-  SKIP_MO = !!($('btSkipMo') && $('btSkipMo').checked);
-  CORR_WIN = parseInt($('corrW') ? $('corrW').value : '24') || 24;
-  if (CACHE_SKIP_MO !== SKIP_MO) { await buildCache(); }
-  
-  var stocks = getEnabledStocks().filter(function(s) { return RAW_SCORES[s.c]; });
-  if (!stocks.length) { alert('No cached data'); return; }
-  
-  var mo = MONTHLY[stocks[0].c], yyyymm = mo[mo.length - 1].date, hurdle = getHurdle(yyyymm);
-  var scores = calcAllScores(yyyymm), valid = scores.filter(function(r) { return r.score !== null; });
-  valid.sort(function(a, b) { return b.score - a.score; });
-
-  // --- 新增：相關性屏蔽邏輯 ---
-  var tsPass = valid.filter(function(r) { return r.r12 !== null && r.r12 > hurdle; });
-  var ct = gv('corrT') || 0.75, mh = parseInt($('btH') ? $('btH').value : '3') || 3;
-  var sel = [];
-  var rejectedByCorr = {}; // 記錄 { '被屏蔽代碼': '造成的衝突代碼' }
-
-  for (var i = 0; i < tsPass.length; i++) {
-    var cand = tsPass[i];
-    var conflict = null;
-    
-    // 與已選中的標的檢查相關性
-    for (var x of sel) {
-      if (Math.abs(calcCorr(cand.s.c, x.s.c, yyyymm)) >= ct) {
-        conflict = x.s.c;
-        break;
-      }
-    }
-
-    if (!conflict && sel.length < mh) {
-      sel.push(cand);
-    } else if (conflict) {
-      rejectedByCorr[cand.s.c] = conflict; // 標記衝突原因
-    }
-  }
-  // -----------------------
-
-  renderSig(sel, valid.slice(-3).reverse(), valid, yyyymm, hurdle);
-  renderST(valid, hurdle, sel.map(s => s.s.c), rejectedByCorr); // 傳入屏蔽資訊
+  if (!CACHE_BUILT) { alert('請先 Fetch Data'); return; }
+  REBAL_FREQ = $('btFreq') ? $('btFreq').value : "1";
+  if (CACHE_SKIP_MO !== SKIP_MO) await buildCache();
+  const stocks = getEnabledStocks().filter(s => RAW_SCORES[s.c]);
+  if (!stocks.length) return alert('No data');
+  let latestDate = Object.keys(RAW_SCORES[stocks[0].c]).sort().pop();
+  let hurdle = getHurdle(latestDate);
+  let scores = calcAllScores(latestDate);
+  let valid = scores.filter(r => r.score !== null);
+  valid.sort((a,b) => b.score - a.score);
+  renderSig(valid.slice(0,10), valid.slice(-3).reverse(), valid, latestDate, hurdle);
+  renderST(valid, hurdle, [], {});
 }
 
 function renderSig(sel,wk,all,yyyymm,hurdle){
@@ -1304,7 +1364,7 @@ function renderSig(sel,wk,all,yyyymm,hurdle){
       +'<span style="width:36px;text-align:right;font-family:monospace">'+zf(b[1])+'</span></div>';
     });
     html+='</div><div style="margin-top:5px;font-size:10px;color:var(--mu);font-family:monospace">'
-    +'R12:'+pf(r.r12)+' R6:'+pf(r.r6)+' R3:'+pf(r.r3)+'</div></div>';
+    +'R240:'+pf(r.r12)+' R6:'+pf(r.r6)+' R3:'+pf(r.r3)+'</div></div>';
   });
   html+='</div>';
   if(!sel.length)html+='<div style="color:var(--ye);font-size:12px;margin-bottom:9px">No stocks pass TS - hold cash</div>';
@@ -1345,58 +1405,157 @@ function renderST(all, hurdle, selectedCodes, rejectedMap) {
     + '<td>' + (ts ? '<span style="color:var(--gr)">Y</span>' : '<span style="color:var(--re)">N</span>') + '</td></tr>';
   }).join('');
 }
-
 function runBTcore(mh, mode) {
-  var stocks = getEnabledStocks().filter(function(s) { return RAW_SCORES[s.c]; });
-  if (stocks.length < 3) return null;
-      var refMo = BENCH_MONTHLY.length ? BENCH_MONTHLY : MONTHLY[stocks[0].c];
-  if (!refMo || !refMo.length) return null;
-  var allM = refMo.map(function(p) { return p.date; }).sort();
+  if (!CACHE_BUILT) return null;
+  REBAL_FREQ = $('btFreq') ? $('btFreq').value : "1";
+  const masterTicker = DAILY['0050'] ? '0050' : (DAILY['SPY'] ? 'SPY' : Object.keys(DAILY)[0]);
+  if (!DAILY[masterTicker]) return null;
+  const rebalDates = getPreciseRebalanceDates(DAILY[masterTicker], REBAL_FREQ);
+  if (rebalDates.length < 15) return null;
 
+  const lagEl = document.querySelector('input[name="lagMode"]:checked');
+  const LAG = lagEl ? parseInt(lagEl.value) : 1;
 
-    var rawS = $('btS') ? ($('btS').value || '').trim().slice(0, 7) : '';
-  var rawE = $('btE') ? ($('btE').value || '').trim().slice(0, 7) : '';
+  let nav = gv('btCap') || 100000;
+  let bNav = nav;
+  let records = [];
+  let holdings = { CASH: 1.0 };
 
-  var lagEl = document.querySelector('input[name="lagMode"]:checked');
-  var LAG = lagEl ? parseInt(lagEl.value) : 1;
+  const COST = (gv('btC') || 0.3) / 100;
+  const ct = gv('corrT') || 0.75;
+  const shortN = parseInt($('btSN') ? $('btSN').value : '0') || 0;
+  const capModeEl = document.querySelector('input[name="capMode"]:checked');
+  const capMode = capModeEl ? capModeEl.value : 'neutral';
+  const shortTSF = !!($('btSTSF') && $('btSTSF').checked);
+  const indExitOn = ($('btIndExit').value === 'on');
+  const regimeOn = ($('btRegime').value === 'on');
+  const regimeExp = gv('btRegimeExp') || 50;
 
-    var MIN = 14, cS = MIN + LAG;
-  if (rawS) {
-    for (var i = MIN + LAG; i < allM.length; i++) {
-      if (allM[i] >= rawS) { cS = i; break; }
+  const DEFENSIVE = ['TLT','GLD','SGOV'];
+
+  for (let i = Math.max(LAG, 14); i < rebalDates.length; i++) {
+    const sigDate = rebalDates[i];
+    const prevDate = rebalDates[i-1];
+    const scoreDate = rebalDates[i - LAG];
+
+    const hurdle = getHurdle(scoreDate);
+    let scores = calcAllScores(scoreDate);
+    let valid = scores.filter(r => r.score !== null);
+    valid.sort((a,b) => b.score - a.score);
+
+    if (valid.length < 5) {
+      records.push({ month: sigDate, nav: nav, bNav: bNav, holdings: {CASH:1}, pRet:0, hurdle: hurdle, stockRets:{} });
+      holdings = { CASH: 1.0 };
+      continue;
     }
+
+    let tsPass = valid.filter(r => r.r12 !== null && r.r12 > hurdle && DEFENSIVE.indexOf(r.s.c) === -1);
+    let sel = [];
+    for (let cand of tsPass) {
+      if (sel.length >= mh) break;
+      if (indExitOn) {
+        let bars = DAILY[cand.s.c];
+        let price = getPriceOnDate(bars, sigDate);
+        let ma60 = calcMA(bars, sigDate, 60);
+        let ma60prev = calcMA(bars, getPrevWorkDay(bars, sigDate, 5), 60);
+        if (price && ma60 && ma60prev && price < ma60 && ma60 < ma60prev) continue;
+      }
+      if (sel.every(x => Math.abs(calcCorr(cand.s.c, x.s.c, scoreDate)) < ct)) {
+        sel.push(cand);
+      }
+    }
+
+    let exposure = 1.0;
+    if (regimeOn) {
+      let mBars = DAILY['0050'] || DAILY['SPY'];
+      if (isBearishRegime(mBars, sigDate, 60)) exposure = regimeExp / 100;
+    }
+
+    let selS = [];
+    if (shortN > 0 && sel.length > 0) {
+      let longMap = {}; sel.forEach(r => longMap[r.s.c] = 1);
+      let sCands = valid.filter(r => !longMap[r.s.c]);
+      if (shortTSF) sCands = sCands.filter(r => r.r12 < 0);
+      sCands.sort((a,b) => a.score - b.score);
+      for (let ks = 0; ks < sCands.length && selS.length < shortN; ks++) {
+        let candS = sCands[ks];
+        if (selS.every(x => Math.abs(calcCorr(candS.s.c, x.s.c, scoreDate)) < ct)) selS.push(candS);
+      }
+    }
+
+    let newH = {};
+    if (!sel.length) {
+      newH = { CASH: 1.0 };
+    } else {
+      let is1330 = capMode === '1330';
+      let lScale = is1330 ? 1.0 : 0.5;
+      let sScale = is1330 ? 0.3 : 0.5;
+      if (mode === 'rank') {
+        let ldenom = sel.length * (sel.length + 1) / 2;
+        sel.forEach((r, i) => { newH[r.s.c] = lScale * (sel.length - i) / ldenom * exposure; });
+      } else {
+        let lw = lScale / sel.length * exposure;
+        sel.forEach(r => { newH[r.s.c] = lw; });
+      }
+      if (selS.length) {
+        let sdenom = mode === 'rank' ? selS.length * (selS.length + 1) / 2 : selS.length;
+        selS.forEach((r, i) => {
+          newH[r.s.c] = -sScale * (mode === 'rank' ? (selS.length - i) / sdenom : 1 / sdenom);
+        });
+      }
+    }
+
+    let totalW = Object.values(newH).reduce((a,c)=>a+c, 0);
+    let cashW = 1 - totalW;
+    if (cashW > 0.001) newH['CASH'] = cashW;
+
+    let allC = Object.keys(holdings).concat(Object.keys(newH));
+    let seen2 = {}; allC.forEach(c => seen2[c] = true);
+    let tv = 0;
+    Object.keys(seen2).forEach(c => { tv += Math.abs((newH[c]||0) - (holdings[c]||0)); });
+
+    let cr = getTNXRate(scoreDate);
+    let pRet = 0, pureRet = 0, stockRets = {};
+
+    Object.keys(newH).forEach(c => {
+      let wt = newH[c];
+      if (c === 'CASH') {
+        let r_c = cr / 12;
+        pRet += wt * r_c; pureRet += wt * r_c;
+        stockRets.CASH = { ret: r_c, w: wt };
+        return;
+      }
+      let p0 = getMo(c, prevDate);
+      let p1 = getMo(c, sigDate);
+      if (p0 && p1 && p0 > 0) {
+        let r_s = p1 / p0 - 1;
+        pRet += wt * r_s; pureRet += wt * r_s;
+        stockRets[c] = { ret: r_s, w: wt };
+      } else {
+        stockRets[c] = { ret: 0, w: wt };
+      }
+    });
+
+    pRet -= (tv / 2) * COST;
+    nav *= (1 + pRet);
+
+    let driftedH = {};
+    Object.keys(newH).forEach(c => {
+      let ret = stockRets[c] ? stockRets[c].ret : 0;
+      driftedH[c] = newH[c] * (1 + ret) / (1 + pureRet);
+    });
+
+    let b0 = getBench(prevDate);
+    let b1 = getBench(sigDate);
+    if (b0 && b1 && b0 > 0) bNav *= (1 + b1 / b0 - 1);
+
+    let hCopy = {}; Object.keys(newH).forEach(k => hCopy[k] = newH[k]);
+    records.push({ month: sigDate, nav: nav, bNav: bNav, holdings: hCopy, pRet: pRet, hurdle: hurdle, stockRets: stockRets });
+    holdings = driftedH;
   }
+  return records.length >= 6 ? records : null;
+}
 
-
-  var dataEnd = allM[allM.length - 1];
-  stocks.forEach(function(s) {
-    var mo = MONTHLY[s.c];
-    if (mo && mo.length) {
-      var last = mo[mo.length - 1].date;
-      if (last < dataEnd) dataEnd = last;
-    }
-  });
-  var todayM = new Date().toISOString().slice(0, 7);
-  if (dataEnd > todayM) dataEnd = todayM;
-
-  var cE = allM.length - 1;
-  while (cE >= MIN + LAG && allM[cE] > dataEnd) cE--;
-  if (rawE) {
-    for (var i2 = cE; i2 >= MIN + LAG; i2--) {
-      if (allM[i2] <= rawE) { cE = i2; break; }
-    }
-  }
-
-
-  if (cS > cE) return null;
-
-
-    var INIT = gv('btCap') || 100000, COST = (gv('btC') || 0.3) / 100, ct = gv('corrT') || 0.75;
-  var shortN = parseInt($('btSN') ? $('btSN').value : '0') || 0;
-  var capModeEl = document.querySelector('input[name="capMode"]:checked');
-  var capMode = capModeEl ? capModeEl.value : 'neutral';
-  var shortTSF = !!($('btSTSF') && $('btSTSF').checked);
-  var nav = INIT, bNav = INIT, records = [], holdings = { CASH: 1.0 };
 
   function getBench(m) {
     if (!BENCH_MONTHLY.length) return null;
