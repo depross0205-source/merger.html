@@ -1402,6 +1402,96 @@ window.onload = async function() {
   
   console.log('🚀 台股動能選股 V2.0 Final 已載入完成');
   sl('fetchLog', '系統準備就緒，請點擊「抓取全部」', true);
+  // ==================== 資料抓取功能（關鍵！） ====================
+async function fetchAll() {
+  showL('正在抓取全部資料...');
+  sl('fetchLog', '開始抓取 Yahoo Finance...', true);
+
+  const stocks = getEnabledStocks();
+  const proxy = $('proxyUrl').value.trim() || 'https://shield-proxy.depross0205.workers.dev?url=';
+  let success = 0, failed = [];
+
+  for (let s of stocks) {
+    try {
+      let url = proxy + encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${s.c}?interval=1d&range=5y`);
+      let resp = await fetch(url);
+      let json = await resp.json();
+
+      if (json.chart && json.chart.result && json.chart.result[0]) {
+        let result = json.chart.result[0];
+        let timestamps = result.timestamp;
+        let quotes = result.indicators.quote[0];
+
+        let daily = [];
+        for (let i = 0; i < timestamps.length; i++) {
+          if (quotes.close[i] && quotes.high[i] && quotes.low[i] && quotes.open[i]) {
+            daily.push({
+              date: new Date(timestamps[i] * 1000).toISOString().slice(0,10),
+              o: quotes.open[i],
+              h: quotes.high[i],
+              l: quotes.low[i],
+              c: quotes.close[i],
+              v: quotes.volume[i] || 0
+            });
+          }
+        }
+        DAILY[s.c] = daily;
+        success++;
+        sl('fetchLog', `已抓取 ${s.c} (${success}/${stocks.length})`, true);
+      } else {
+        failed.push(s.c);
+      }
+    } catch (e) {
+      failed.push(s.c);
+      console.error(s.c, e);
+    }
+    await new Promise(r => setTimeout(r, 800)); // 避免被封
+  }
+
+  // 抓取 ^TNX 和 ^TWII
+  try {
+    let tnxUrl = proxy + encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/%5ETNX?interval=1mo&range=10y');
+    let tnxJson = await (await fetch(tnxUrl)).json();
+    if (tnxJson.chart?.result) TNX_MONTHLY = processMonthly(tnxJson.chart.result[0]);
+
+    let benchUrl = proxy + encodeURIComponent('https://query1.finance.yahoo.com/v8/finance/chart/%5ETWII?interval=1mo&range=10y');
+    let benchJson = await (await fetch(benchUrl)).json();
+    if (benchJson.chart?.result) BENCH_MONTHLY = processMonthly(benchJson.chart.result[0]);
+  } catch (e) { console.warn('Bench/TNX fetch failed', e); }
+
+  hideL();
+  if (success > 0) {
+    await buildCache();
+    sl('fetchLog', `✅ 抓取完成！成功 ${success} 檔，失敗 ${failed.length} 檔`, true);
+    updFetchStat();
+  } else {
+    sl('fetchLog', '❌ 全部抓取失敗，請檢查 Proxy', false);
+  }
+}
+
+function processMonthly(result) {
+  let timestamps = result.timestamp;
+  let quotes = result.indicators.quote[0];
+  let monthly = [];
+  for (let i = 0; i < timestamps.length; i++) {
+    if (quotes.close[i]) {
+      monthly.push({
+        date: new Date(timestamps[i] * 1000).toISOString().slice(0,7),
+        c: quotes.close[i]
+      });
+    }
+  }
+  return monthly;
+}
+
+function updFetchStat() {
+  // 可自行擴充顯示各股票最後日期
+  console.log('資料更新完成');
+}
+
+// 其他必要小函數
+function fetchUpdate() { alert('更新功能開發中...'); }
+function checkDataHealth() { alert('資料健康診斷開發中...'); }
 };
 </script>
 </body>
