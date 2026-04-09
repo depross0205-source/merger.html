@@ -1300,48 +1300,49 @@ function runBTcore(mh, mode) {
         if (selS.every(function(x) { return Math.abs(calcCorr(candS.s.c, x.s.c, scoreM)) < ct; })) selS.push(candS);
       }
     }
-
-    var newH = {};
-    if (!sel.length) { newH = { CASH: 1.0 }; }
+    // 💡 1. 決定本期目標權重 (Target) 
+    var target = {};
+    if (!sel.length) { target = { CASH: 1.0 }; }
     else {
       var is1330 = capMode === '1330';
       var lScale = is1330 ? 1.0 : 0.5, sScale = is1330 ? 0.3 : 0.5;
       if (mode === 'rank') {
         var ldenom = sel.length * (sel.length + 1) / 2;
-        sel.forEach(function(r, i) { newH[r.s.c] = lScale * (sel.length - i) / ldenom * exposure; });
+        sel.forEach(function(r, i) { target[r.s.c] = lScale * (sel.length - i) / ldenom * exposure; });
       } else {
         var lw = lScale / sel.length * exposure;
-        sel.forEach(function(r) { newH[r.s.c] = lw; });
+        sel.forEach(function(r) { target[r.s.c] = lw; });
       }
       if (selS.length) {
         var sdenom = mode === 'rank' ? selS.length * (selS.length + 1) / 2 : selS.length;
-        selS.forEach(function(r, i) { newH[r.s.c] = -sScale * (mode === 'rank' ? (selS.length - i) / sdenom : 1 / sdenom); });
+        selS.forEach(function(r, i) { target[r.s.c] = -sScale * (mode === 'rank' ? (selS.length - i) / sdenom : 1 / sdenom); });
       }
     }
 
-        // 💡 1. 決定目標權重 (Target) 與空倉防護
-    var target = {};
-    var deployedW = 0;
-    if (sel.length > 0) {
-      if (mode === 'rank') {
-        var ldenom = sel.length * (sel.length + 1) / 2;
-        sel.forEach(function(r, i) {
-          var tw = ((sel.length - i) / ldenom) * exposure;
-          target[r.s.c] = tw;
-          deployedW += tw;
-        });
-      } else {
-        var tw = (1 / sel.length) * exposure;
-        sel.forEach(function(r) {
-          target[r.s.c] = tw;
-          deployedW += tw;
-        });
-      }
-    }
-    if (deployedW < 1.0) target['CASH'] = 1.0 - deployedW;
+    var totalW = 0; Object.keys(target).forEach(function(c) { totalW += target[c]; });
+    var cashW = 1.0 - totalW;
+    if (cashW > 0.001) target['CASH'] = cashW;
 
-    // 💡 2. 蒐集本期所有需要報價的標的
-    var allTickers = new Set([...Object.keys(holdings), ...Object.keys(target)]);
+    // 💡 2. 計算換手率與真實摩擦成本 (在月初換股的瞬間產生的成本)
+    var turnover = 0;
+    var allT = new Set([...Object.keys(holdings), ...Object.keys(target)]);
+    allT.forEach(function(c) {
+      var oldW = holdings[c] || 0; // 上個月底漂移後的最終權重
+      var newW = target[c] || 0;
+      turnover += Math.abs(newW - oldW);
+    });
+    turnover /= 2;
+
+    // 平滑且無雙重懲罰的衝擊成本
+    var baseSlippage = 0.001; 
+    var impactMultiplier = Math.max(1, Math.pow(turnover / 0.2, 1.5)); 
+    var impactCost = baseSlippage * impactMultiplier;
+    var friction = (turnover * COST) + impactCost;
+
+    // 先扣除期初換股的摩擦成本
+    nav *= (1 - friction); 
+
+    // 💡 3. 蒐集本期 (prevM 到 sigM) 持倉標的報價，並把 w 加入給介面顯示
     var cashRet = 0;
     if (DAILY['SGOV'] && getPriceOnDate(DAILY['SGOV'], prevM) && getPriceOnDate(DAILY['SGOV'], sigM)) {
       var s0 = getPriceOnDate(DAILY['SGOV'], prevM), s1 = getPriceOnDate(DAILY['SGOV'], sigM);
@@ -1353,58 +1354,50 @@ function runBTcore(mh, mode) {
     }
 
     var stockRets = {};
-    allTickers.forEach(function(c) {
-      if (c === 'CASH') { stockRets[c] = { ret: cashRet }; } 
+    Object.keys(target).forEach(function(c) {
+      if (c === 'CASH') { stockRets[c] = { ret: cashRet, w: target[c] }; } 
       else {
         var p0 = getPriceOnDate(DAILY[c], prevM), p1 = getPriceOnDate(DAILY[c], sigM);
-        stockRets[c] = { ret: (p0 && p1 && p0 > 0) ? (p1 / p0 - 1) : null };
+        stockRets[c] = { ret: (p0 && p1 && p0 > 0) ? (p1 / p0 - 1) : null, w: target[c] };
       }
     });
 
-    // 💡 3. 結算期初持倉的真實報酬 (防呆機制：缺資料強制轉現金)
-    var pRet = 0, validHoldings = {}, forcedCash = 0;
-    for (var c in holdings) {
-      var w = holdings[c], rData = stockRets[c];
+    // 💡 4. 結算本期持倉 (Target) 的真實報酬 (防呆機制：缺資料強制轉現金)
+    var pRet = 0, validTarget = {}, forcedCash = 0;
+    for (var c in target) {
+      var w = target[c], rData = stockRets[c];
       if (rData.ret === null) { forcedCash += w; } 
-      else { pRet += w * rData.ret; validHoldings[c] = w; }
+      else { pRet += w * rData.ret; validTarget[c] = w; }
     }
-    if (forcedCash > 0) validHoldings['CASH'] = (validHoldings['CASH'] || 0) + forcedCash;
+    if (forcedCash > 0) validTarget['CASH'] = (validTarget['CASH'] || 0) + forcedCash;
 
     // 🛡️ 機構級防呆：防止極端黑天鵝導致分母歸零
     if (!isFinite(pRet) || pRet <= -0.9999) pRet = -0.9999; 
-
-    // 💡 4. 計算期末自然漂移權重 (Drift)
-    var drifted = {};
-    for (var c in validHoldings) {
-      drifted[c] = (validHoldings[c] * (1 + (stockRets[c]?.ret || 0))) / (1 + pRet);
-    }
-
-    // 💡 5. 計算換手率與真實摩擦成本 (Cost + Impact)
-    var turnover = 0;
-    allTickers.forEach(function(c) { turnover += Math.abs((target[c] || 0) - (drifted[c] || 0)); });
-    turnover /= 2;
-
-    var baseSlippage = 0.001; 
-    var impactMultiplier = Math.max(1, Math.pow(turnover / 0.2, 1.5)); 
-    var impactCost = baseSlippage * impactMultiplier;
-    var friction = (turnover * COST) + impactCost; // 獨立疊加，避免雙重懲罰
-
-    pRet -= friction; 
+    
+    // 更新淨值 (享受本期報酬)
     nav *= (1 + pRet);
+
+    // 💡 5. 計算期末自然漂移權重 (Drift)
+    var drifted = {};
+    for (var c in validTarget) {
+      drifted[c] = (validTarget[c] * (1 + (stockRets[c]?.ret || 0))) / (1 + pRet);
+    }
 
     // 💡 6. 結算大盤與紀錄保存
     var b0 = getPriceOnDate(refDaily, prevM), b1 = getPriceOnDate(refDaily, sigM);
     if (b0 && b1 && b0 > 0) bNav *= (1 + (b1 / b0 - 1));
 
-        var hCopy = {}; Object.keys(target).forEach(k => hCopy[k] = target[k]);
+    var hCopy = {}; Object.keys(target).forEach(k => hCopy[k] = target[k]);
     var periodStr = prevM + " ~ " + sigM;
-    records.push({ month: sigM, period: periodStr, nav: nav, bNav: bNav, holdings: hCopy, pRet: pRet, hurdle: hurdle, stockRets: stockRets });
     
-    // 💡 7. 狀態傳承：將新目標權重正式指派給 holdings，帶到下一個月！
-    holdings = target; 
+    records.push({ month: sigM, period: periodStr, nav: nav, bNav: bNav, holdings: hCopy, pRet: pRet, hurdle: hurdle, stockRets: stockRets });
+
+    // 💡 7. 狀態傳承：將漂移後的權重正式指派給 holdings，帶到下一個月初！
+    holdings = drifted;
   }
   return records.length >= 6 ? records : null;
-}
+
+    
 
 
 
