@@ -721,26 +721,25 @@ function getEnabledStocks() {
     var code = el.dataset.code;
     var tw = el.dataset.tw === '1';
     
-    // 決定所屬池子 (Pool)
-    var pool = 'us'; // 預設為美股
-    if (tw) pool = 'tw'; // 台股
-    // 檢查是否為 US-ETF (利用你原本設定的 data-type 或是直接用名稱判斷)
-    // 假設你在設定股池時，ETF 的 span 都包在 id="ib0" 或 id="ib_ish" 裡面
-    var parentIb = el.closest('.ib');
-    if (parentIb && (parentIb.id === 'ib0' || parentIb.id === 'ib_ish')) {
-      pool = 'etf';
+    // 精準決定所屬池子 (Pool)
+    var pool = 'other'; 
+    if (tw) {
+      pool = 'tw';
+    } else {
+      var parentIb = el.closest('.ib');
+      var pid = parentIb ? parentIb.id : '';
+      if (pid === 'ib0' || pid === 'ib_ish') {
+        pool = 'etf';
+      } else if (pid === 'ib1' || pid === 'ib_sp30' || pid === 'ib_sp100' || pid === 'ib_ndx30' || pid === 'ib_sox20') {
+        pool = 'us'; // 只有真正的美國指數群組，才算是美股
+      }
     }
     
-    result.push({ 
-      c: code, 
-      n: cn ? cn.textContent : '', 
-      type: el.dataset.type, 
-      tw: tw,
-      pool: pool 
-    });
+    result.push({ c: code, n: cn ? cn.textContent : '', type: el.dataset.type, tw: tw, pool: pool });
   });
   return result;
 }
+
 
 function getStockName(code){var el=document.querySelector('[data-code="'+code+'"] .cn');return el?el.textContent:code;}
 function getWeightMode(){var r=document.querySelector('input[name="wtMode"]:checked');return r?r.value:'eq';}
@@ -1036,21 +1035,46 @@ function getHurdle(dateStr){return Math.max(0,getTNXRate(dateStr)+(gv('btSpread'
 
 function calcAllScores(dateStr){
   var stocks=getEnabledStocks().filter(function(s){return RAW_SCORES[s.c]&&RAW_SCORES[s.c][dateStr];});
-  if(stocks.length<5)return[];
+  if(stocks.length<3)return[];
+
   var wM=gv('wMom')/100,wB=gv('wBias')/100,wS=gv('wSlope')/100,wV=gv('wVol')/100,wK=gv('wKbar')/100;
-  var rMs=[],rBs=[],rSs=[],rVs=[],rKs=[];
-  var infos=stocks.map(function(s){
-    var raw=RAW_SCORES[s.c][dateStr];
-    rMs.push(raw.rm);rBs.push(raw.rb);rSs.push(raw.rs);rVs.push(raw.rv);rKs.push(raw.rk);
-    return{s:s,raw:raw};
+
+  // 1. 先把所有合格股票依照池子分組
+  var poolGroups = { 'tw': [], 'us': [], 'etf': [], 'other': [] };
+  stocks.forEach(function(s) {
+      var p = s.pool || 'other';
+      poolGroups[p].push(s);
   });
-  var zMs=crossZ(rMs,99),zBs=crossZ(rBs,2),zSs=crossZ(rSs,99),zVs=crossZ(rVs,2),zKs=crossZ(rKs,99);
-  return infos.map(function(d,i){
-    var zm=zMs[i],zb=zBs[i],zs=zSs[i],zv=zVs[i],zk=zKs[i],tw=0,tt=0;
-    if(zm!==null){tw+=wM*zm;tt+=wM;}if(zb!==null){tw+=wB*zb;tt+=wB;}if(zs!==null){tw+=wS*zs;tt+=wS;}if(zv!==null){tw+=wV*zv;tt+=wV;}if(zk!==null){tw+=wK*zk;tt+=wK;}
-    return{s:d.s,score:tt>0.1?tw/tt:null,zm:zm,zb:zb,zs:zs,zv:zv,zk:zk,r240:d.raw.r240};
+
+  var finalScores = [];
+
+  // 2. 針對每個池子「獨立」進行動能分數標準化
+  Object.keys(poolGroups).forEach(function(p) {
+      var pStocks = poolGroups[p];
+      if (!pStocks.length) return;
+
+      var rMs=[], rBs=[], rSs=[], rVs=[], rKs=[];
+      var infos = pStocks.map(function(s) {
+          var raw=RAW_SCORES[s.c][dateStr];
+          rMs.push(raw.rm); rBs.push(raw.rb); rSs.push(raw.rs); rVs.push(raw.rv); rKs.push(raw.rk);
+          return {s:s, raw:raw};
+      });
+
+      // 在「池子內部」進行 Z-Score 計算，徹底終結大鍋炒
+      var zMs=crossZ(rMs,99), zBs=crossZ(rBs,2), zSs=crossZ(rSs,99), zVs=crossZ(rVs,2), zKs=crossZ(rKs,99);
+
+      infos.forEach(function(d,i) {
+          var zm=zMs[i],zb=zBs[i],zs=zSs[i],zv=zVs[i],zk=zKs[i],tw=0,tt=0;
+          if(zm!==null){tw+=wM*zm;tt+=wM;} if(zb!==null){tw+=wB*zb;tt+=wB;}
+          if(zs!==null){tw+=wS*zs;tt+=wS;} if(zv!==null){tw+=wV*zv;tt+=wV;}
+          if(zk!==null){tw+=wK*zk;tt+=wK;}
+          finalScores.push({s:d.s, score:tt>0.1?tw/tt:null, zm:zm, zb:zb, zs:zs, zv:zv, zk:zk, r240:d.raw.r240});
+      });
   });
+
+  return finalScores;
 }
+
 function calcCorr(c1, c2, dateStr) {
   var b1 = DAILY[c1], b2 = DAILY[c2];
   if (!b1 || !b2) return 0;
@@ -1173,20 +1197,21 @@ function runBTcore(mh, mode) {
     // 建立三個獨立的候選房間
     var pools = { 'tw': [], 'us': [], 'etf': [] };
 
-    valid.forEach(function(r) {
-      // 基本動能過關且非防禦型
+          valid.forEach(function(r) {
       var passMom = r.r240 !== null && r.r240 > hurdle && DEFENSIVE.indexOf(r.s.c) === -1;
       if (!passMom) return;
-      
-      // 硬門檻：價格必須大於 60MA
       var ma60 = calcMA(DAILY[r.s.c], scoreM, 60);
       var currentPrice = getPriceOnDate(DAILY[r.s.c], scoreM);
       if (!ma60 || !currentPrice || currentPrice < ma60) return;
       
-      // 依照 getEnabledStocks 裡打好的標籤，分發到對應的池子
-      var p = r.s.pool || 'us'; 
-      if (pools[p]) pools[p].push(r);
+      var p = r.s.pool; 
+      // 只允許三大池的股票進入排序房間，排除 other (如中日股)
+      if (p === 'tw' || p === 'us' || p === 'etf') {
+        if (pools[p]) pools[p].push(r);
+      }
     });
+
+
 
     // 破除大鍋炒！三個池子「各自」依分數高低獨立排序
     pools['tw'].sort(function(a, b) { return b.score - a.score; });
@@ -1618,10 +1643,13 @@ var DEFENSIVE = ['TLT', 'GLD', 'SGOV'];
 
   // 建立三個獨立房間並分發
   var pools = { 'tw': [], 'us': [], 'etf': [] };
-  valid.forEach(function(r) {
-    var p = r.s.pool || 'us';
-    if (pools[p]) pools[p].push(r);
+    valid.forEach(function(r) {
+    var p = r.s.pool;
+    if (p === 'tw' || p === 'us' || p === 'etf') {
+      if (pools[p]) pools[p].push(r);
+    }
   });
+
 
   // 各自獨立排序
   pools['tw'].sort(function(a, b) { return b.score - a.score; });
@@ -1692,22 +1720,39 @@ function renderSig(sel, wk, all, date, hurdle) {
   var pf = function(v) { return v !== null ? (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%' : '-'; };
   var tnx = getTNXRate(date);
   var html = '<div style="font-size:11px;color:var(--mu);margin-bottom:9px">Date: <b style="color:var(--tw)">' + date + '</b> | ^TNX: <b style="color:var(--bl)">' + (tnx * 100).toFixed(2) + '%</b> | Hurdle: <b style="color:var(--ye)">' + (hurdle * 100).toFixed(2) + '%</b></div>';
-  html += '<div style="font-size:12px;font-weight:700;color:var(--tw);margin-bottom:6px">Top ' + sel.length + '</div><div class="sg">';
-  sel.forEach(function(r, rk) {
-    var isUs = !r.s.tw, col = isUs ? 'var(--us)' : 'var(--tw)', rbg = isUs ? 'var(--usd)' : 'var(--twd)';
-    html += '<div class="scard"><div class="shdr"><div><div class="scode" style="color:' + col + '">' + r.s.c + '</div><div class="sname">' + r.s.n + '</div></div><span class="srank" style="background:' + rbg + ';color:' + col + ';border:1px solid ' + col + '">#' + (rk + 1) + '</span></div>';
-    html += '<div class="sscore">' + (r.score >= 0 ? '+' : '') + r.score.toFixed(2) + '</div><div class="sbars">';
-    [['Mom', r.zm, 'var(--tw)'], ['Bias', r.zb, 'var(--bl)'], ['Slope', r.zs, 'var(--te)'], ['Vol', r.zv, 'var(--ye)'], ['Kbar', r.zk, 'var(--ac)']].forEach(function(b) {
-      if (b[1] === null) return; var w = Math.round(Math.min(100, Math.abs(b[1]) * 25));
-      html += '<div class="sbrow"><span style="width:32px">' + b[0] + '</span><div class="sbwrap"><div class="sbfill" style="width:' + w + '%;background:' + b[2] + '"></div></div><span style="width:36px;text-align:right;font-family:monospace">' + zf(b[1]) + '</span></div>';
-    });
-    html += '</div><div style="margin-top:5px;font-size:10px;color:var(--mu);font-family:monospace">R240:' + pf(r.r240) + '</div></div>';
+
+  // 將選出的標的依照池子分組顯示
+  var selPools = { 'us': [], 'tw': [], 'etf': [] };
+  sel.forEach(function(r) {
+      var p = r.s.pool;
+      if (p === 'us' || p === 'tw' || p === 'etf') selPools[p].push(r);
   });
-  html += '</div>'; if (!sel.length) html += '<div style="color:var(--ye);font-size:12px;margin-bottom:9px">No stocks pass TS - hold cash</div>';
-  html += '<div style="font-size:12px;font-weight:700;color:var(--re);margin:9px 0 6px">Weakest 3</div><div class="sg">';
-  wk.forEach(function(r, rk) { html += '<div class="scard wk"><div class="shdr"><div><div class="scode">' + r.s.c + '</div><div class="sname">' + r.s.n + '</div></div><span class="srank">W' + (rk + 1) + '</span></div><div class="sscore" style="color:var(--re)">' + (r.score >= 0 ? '+' : '') + r.score.toFixed(2) + '</div></div>'; });
-  html += '</div>'; $('sigContent').innerHTML = html;
+
+  var poolNames = {'us': '🇺🇸 美股配置', 'tw': '🇹🇼 台股配置', 'etf': '🛡️ ETF 配置'};
+  var poolColors = {'us': 'var(--us)', 'tw': 'var(--tw)', 'etf': 'var(--ac)'};
+
+  ['us', 'tw', 'etf'].forEach(function(p) {
+      var pItems = selPools[p];
+      if (!pItems || !pItems.length) return;
+
+      html += '<div style="font-size:13px;font-weight:700;color:' + poolColors[p] + ';margin:16px 0 6px;border-bottom:1px solid '+poolColors[p]+';padding-bottom:4px">' + poolNames[p] + ' (入選 '+pItems.length+' 檔)</div><div class="sg">';
+      pItems.forEach(function(r, rk) {
+        var col = poolColors[p], rbg = 'var(--sf2)';
+        html += '<div class="scard" style="border-left:3px solid '+col+'"><div class="shdr"><div><div class="scode" style="color:' + col + '">' + r.s.c + '</div><div class="sname">' + r.s.n + '</div></div><span class="srank" style="background:' + rbg + ';color:' + col + ';border:1px solid ' + col + '">#' + (rk + 1) + '</span></div>';
+        html += '<div class="sscore">' + (r.score >= 0 ? '+' : '') + r.score.toFixed(2) + '</div><div class="sbars">';
+        [['Mom', r.zm, 'var(--tw)'], ['Bias', r.zb, 'var(--bl)'], ['Slope', r.zs, 'var(--te)'], ['Vol', r.zv, 'var(--ye)'], ['Kbar', r.zk, 'var(--ac)']].forEach(function(b) {
+          if (b[1] === null) return; var w = Math.round(Math.min(100, Math.abs(b[1]) * 25));
+          html += '<div class="sbrow"><span style="width:32px">' + b[0] + '</span><div class="sbwrap"><div class="sbfill" style="width:' + w + '%;background:' + b[2] + '"></div></div><span style="width:36px;text-align:right;font-family:monospace">' + zf(b[1]) + '</span></div>';
+        });
+        html += '</div><div style="margin-top:5px;font-size:10px;color:var(--mu);font-family:monospace">R240:' + pf(r.r240) + '</div></div>';
+      });
+      html += '</div>';
+  });
+
+  if (!sel.length) html += '<div style="color:var(--ye);font-size:12px;margin-bottom:9px">無標的通過 TS 與季線門檻 - 全數持有現金</div>';
+  $('sigContent').innerHTML = html;
 }
+
 
 function renderST(pools, hurdle, selectedCodes, rejectedMap, scoreM) {
   $('stCard').classList.remove('hidden');
