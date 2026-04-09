@@ -1124,7 +1124,7 @@ function runBTcore(mh, mode) {
     for (var j = 0; j < tsP.length; j++) {
       if (sel.length >= mh) break;
       var cand = tsP[j];
-      if (indExitOn && isBearishRegime(DAILY[cand.s.c], sigM, 60)) continue;
+      if (indExitOn && isBearishRegime(DAILY[cand.s.c], scoreM, 60)) continue;
       if (sel.every(function(x) { return Math.abs(calcCorr(cand.s.c, x.s.c, scoreM)) < ct; })) sel.push(cand);
     }
 
@@ -1140,7 +1140,7 @@ function runBTcore(mh, mode) {
 
     var exposure = 1.0;
     if (regimeOn) {
-      if (isBearishRegime(refDaily, sigM, 60)) exposure = regimeExp / 100;
+      if (isBearishRegime(refDaily, scoreM, 60)) exposure = regimeExp / 100;
     }
 
     var selS = [];
