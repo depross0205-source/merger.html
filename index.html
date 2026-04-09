@@ -1260,7 +1260,7 @@ function runBTcore(mh, mode) {
       }
     }
 
-    // 依序進房挑選 (誰先挑不影響結果，因為名額是固定的)
+    // 依序進房挑選 (誰先挑不影響結果，因為名額是固定的)i
     pickFromPool('us');
     pickFromPool('tw');
     pickFromPool('etf');
@@ -1396,14 +1396,16 @@ function runBTcore(mh, mode) {
     var b0 = getPriceOnDate(refDaily, prevM), b1 = getPriceOnDate(refDaily, sigM);
     if (b0 && b1 && b0 > 0) bNav *= (1 + (b1 / b0 - 1));
 
-    var hCopy = {}; Object.keys(target).forEach(k => hCopy[k] = target[k]);
+        var hCopy = {}; Object.keys(target).forEach(k => hCopy[k] = target[k]);
     var periodStr = prevM + " ~ " + sigM;
-
     records.push({ month: sigM, period: periodStr, nav: nav, bNav: bNav, holdings: hCopy, pRet: pRet, hurdle: hurdle, stockRets: stockRets });
-    holdings = driftedH;
+    
+    // 💡 7. 狀態傳承：將新目標權重正式指派給 holdings，帶到下一個月！
+    holdings = target; 
   }
   return records.length >= 6 ? records : null;
 }
+
 
 
 function kpi(records, init) {
