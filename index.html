@@ -1175,15 +1175,7 @@ function runBTcore(mh, mode) {
       records.push({ month: sigM, period: periodStr, nav: nav, bNav: bNav, holdings: { CASH: 1.0 }, pRet: 0, hurdle: hurdle, stockRets: {} });
       holdings = { CASH: 1.0 }; continue;
     }
-    // --- 1. 取得各池子配額 ---
-    var qTW = parseInt($('btQuotaTW') ? $('btQuotaTW').value : '2') || 0;
-    var qUS = parseInt($('btQuotaUS') ? $('btQuotaUS').value : '2') || 0;
-    var qETF = parseInt($('btQuotaETF') ? $('btQuotaETF').value : '1') || 0;
-    var quotas = { 'tw': qTW, 'us': qUS, 'etf': qETF };
-    var totalQuota = qTW + qUS + qETF; // 動態計算總名額，取代原本的 mh
-
-    // --- 2. 產生候選名單，並加入「價格 > 60MA」的硬門檻 ---
-      // --- 1. 取得各池子配額 ---
+   
     var qTW = parseInt($('btQuotaTW') ? $('btQuotaTW').value : '2') || 0;
     var qUS = parseInt($('btQuotaUS') ? $('btQuotaUS').value : '2') || 0;
     var qETF = parseInt($('btQuotaETF') ? $('btQuotaETF').value : '1') || 0;
