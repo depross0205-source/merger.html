@@ -1044,24 +1044,32 @@ function runBTcore(mh, mode) {
   var stocks = getEnabledStocks().filter(function(s) { return DAILY[s.c]; });
   if (stocks.length < 3) return null;
   var masterTicker = DAILY['^TWII'] ? '^TWII' : (DAILY['0050'] ? '0050' : (DAILY['SPY'] ? 'SPY' : stocks[0].c));
-var refDaily = DAILY[masterTicker]; if (!refDaily) return null;
+  var refDaily = DAILY[masterTicker]; if (!refDaily) return null;
   var freq = $('btFreq') ? $('btFreq').value : "1";
   
   // 確保 allM 裡面只會有絕對乾淨的「換股日」
   var allM = getPreciseRebalanceDates(refDaily, freq);
   
-   var rawS = $('btS') ? ($('btS').value || '').trim().slice(0, 10) : '';
+  var rawS = $('btS') ? ($('btS').value || '').trim().slice(0, 10) : '';
   var rawE = $('btE') ? ($('btE').value || '').trim().slice(0, 10) : '';
   var lagEl = document.querySelector('input[name="lagMode"]:checked');
-  var LAG = lagEl ? parseInt(lagEl.value) : 1;
+  var LAG = lagEl ? parseInt(lagEl.value) : 1; // 這裡的單位正式回歸「交易日」
 
-  // 因為 LAG 現在代表天數，所以 allM 陣列索引只要確保有 prevM (idx - 1) 即可，所以 cS = 1
-  var cS = 1;
-  if (rawS) { for (var i = cS; i < allM.length; i++) { if (allM[i] >= rawS) { cS = i; break; } } }
+  // 因為 LAG 改為天數，不需要在月份陣列 allM 裡扣除 LAG，只要確保有 prevM 即可 (MIN = 1)
+  var MIN = 1, cS = MIN;
+  if (rawS) { 
+    for (var i = cS; i < allM.length; i++) { 
+      if (allM[i] >= rawS) { cS = i; break; } 
+    } 
+  }
+  
   var cE = allM.length - 1;
-  if (rawE) { for (var i2 = cE; i2 >= cS; i2--) { if (allM[i2] <= rawE) { cE = i2; break; } } }
+  if (rawE) { 
+    for (var i2 = cE; i2 >= cS; i2--) { 
+      if (allM[i2] <= rawE) { cE = i2; break; } 
+    } 
+  }
   if (cS > cE) return null;
-
 
   var INIT = gv('btCap') || 100000, COST = (gv('btC') || 0.3) / 100, ct = gv('corrT') || 0.75;
   var shortN = parseInt($('btSN') ? $('btSN').value : '0') || 0;
@@ -1075,20 +1083,26 @@ var refDaily = DAILY[masterTicker]; if (!refDaily) return null;
   var nav = INIT, bNav = INIT, records = [], holdings = { CASH: 1.0 };
   var DEFENSIVE = ['TLT', 'GLD', 'SGOV'];
 
-
-  
-
   for (var idx = cS; idx <= cE; idx++) {
-    var sigM = allM[idx], prevM = allM[idx - 1], scoreM = allM[idx - LAG];
+    var sigM = allM[idx];            // 本期結算日
+    var prevM = allM[idx - 1];       // 買進基準日 (上期結算日)
+    
+    // 【核心修正：區塊二】將 LAG 視為「往前推 N 個交易日」
+    // 透過 getPrevWorkDay 在大盤日線中精準找到 T-1 或 T-2 的日期
+    var scoreM = getPrevWorkDay(refDaily, prevM, LAG);
+
     var hurdle = getHurdle(scoreM);
     var sc2 = calcAllScores(scoreM);
     var valid = sc2.filter(function(r) { return r.score !== null; });
     valid.sort(function(a, b) { return b.score - a.score; });
 
     if (valid.length < 5) {
-      var b0x = getBench(prevM), b1x = getBench(sigM);
-      if (b0x && b1x && b0x > 0) bNav *= (1 + b1x / b0x - 1);
-      records.push({ month: sigM, nav: nav, bNav: bNav, holdings: { CASH: 1.0 }, pRet: 0, hurdle: hurdle, stockRets: {} });
+      var b0x = getPriceOnDate(refDaily, prevM);
+      var b1x = getPriceOnDate(refDaily, sigM);
+      if (b0x && b1x && b0x > 0) bNav *= (1 + (b1x / b0x - 1));
+      
+      var periodStr = prevM + " ~ " + sigM;
+      records.push({ month: sigM, period: periodStr, nav: nav, bNav: bNav, holdings: { CASH: 1.0 }, pRet: 0, hurdle: hurdle, stockRets: {} });
       holdings = { CASH: 1.0 }; continue;
     }
 
@@ -1113,8 +1127,7 @@ var refDaily = DAILY[masterTicker]; if (!refDaily) return null;
 
     var exposure = 1.0;
     if (regimeOn) {
-      var mBars = DAILY['0050'] || DAILY['SPY'] || DAILY[masterTicker];
-      if (isBearishRegime(mBars, sigM, 60)) exposure = regimeExp / 100;
+      if (isBearishRegime(refDaily, sigM, 60)) exposure = regimeExp / 100;
     }
 
     var selS = [];
@@ -1165,26 +1178,31 @@ var refDaily = DAILY[masterTicker]; if (!refDaily) return null;
         var r_c = cr / cashDivisor; pRet += wt * r_c; pureRet += wt * r_c;
         stockRets.CASH = { ret: r_c, w: wt }; return;
       }
+      
+      // 【核心修正：區塊三】統一改用 getPriceOnDate 在日線中精準取價
       var p0 = getPriceOnDate(DAILY[c], prevM), p1 = getPriceOnDate(DAILY[c], sigM);
       if (p0 && p1 && p0 > 0) {
         var r_s = p1 / p0 - 1; pRet += wt * r_s; pureRet += wt * r_s;
         stockRets[c] = { ret: r_s, w: wt };
       } else { stockRets[c] = { ret: 0, w: wt }; }
     });
+    
     pRet -= (tv / 2) * COST; nav *= (1 + pRet);
 
     var driftedH = {};
     Object.keys(newH).forEach(function(c) { driftedH[c] = newH[c] * (1 + (stockRets[c] ? stockRets[c].ret : 0)) / (1 + pureRet); });
 
-    var b0 = getBench(prevM), b1 = getBench(sigM);
-    if (b0 && b1 && b0 > 0) bNav *= (1 + b1 / b0 - 1);
+    var b0 = getPriceOnDate(refDaily, prevM), b1 = getPriceOnDate(refDaily, sigM);
+    if (b0 && b1 && b0 > 0) bNav *= (1 + (b1 / b0 - 1));
 
     var hCopy = {}; Object.keys(newH).forEach(function(k) { hCopy[k] = newH[k]; });
-    records.push({ month: sigM, nav: nav, bNav: bNav, holdings: hCopy, pRet: pRet, hurdle: hurdle, stockRets: stockRets });
+    var periodStr = prevM + " ~ " + sigM;
+    records.push({ month: sigM, period: periodStr, nav: nav, bNav: bNav, holdings: hCopy, pRet: pRet, hurdle: hurdle, stockRets: stockRets });
     holdings = driftedH;
   }
   return records.length >= 6 ? records : null;
 }
+
 
 function kpi(records, init) {
   var last = records[records.length - 1];
