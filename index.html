@@ -1162,40 +1162,65 @@ function runBTcore(mh, mode) {
     var totalQuota = qTW + qUS + qETF; // 動態計算總名額，取代原本的 mh
 
     // --- 2. 產生候選名單，並加入「價格 > 60MA」的硬門檻 ---
-    var tsP = valid.filter(function(r) { 
+      // --- 1. 取得各池子配額 ---
+    var qTW = parseInt($('btQuotaTW') ? $('btQuotaTW').value : '2') || 0;
+    var qUS = parseInt($('btQuotaUS') ? $('btQuotaUS').value : '2') || 0;
+    var qETF = parseInt($('btQuotaETF') ? $('btQuotaETF').value : '1') || 0;
+    var quotas = { 'tw': qTW, 'us': qUS, 'etf': qETF };
+    var totalQuota = qTW + qUS + qETF; 
+
+    // --- 2. 分池過濾與「各自排序」 ---
+    // 建立三個獨立的候選房間
+    var pools = { 'tw': [], 'us': [], 'etf': [] };
+
+    valid.forEach(function(r) {
+      // 基本動能過關且非防禦型
       var passMom = r.r240 !== null && r.r240 > hurdle && DEFENSIVE.indexOf(r.s.c) === -1;
-      if (!passMom) return false;
+      if (!passMom) return;
       
+      // 硬門檻：價格必須大於 60MA
       var ma60 = calcMA(DAILY[r.s.c], scoreM, 60);
       var currentPrice = getPriceOnDate(DAILY[r.s.c], scoreM);
-      if (!ma60 || !currentPrice || currentPrice < ma60) return false; // 破季線直接淘汰
+      if (!ma60 || !currentPrice || currentPrice < ma60) return;
       
-      return true;
+      // 依照 getEnabledStocks 裡打好的標籤，分發到對應的池子
+      var p = r.s.pool || 'us'; 
+      if (pools[p]) pools[p].push(r);
     });
 
-    var sel = [];
-    var counts = { 'tw': 0, 'us': 0, 'etf': 0 };
+    // 破除大鍋炒！三個池子「各自」依分數高低獨立排序
+    pools['tw'].sort(function(a, b) { return b.score - a.score; });
+    pools['us'].sort(function(a, b) { return b.score - a.score; });
+    pools['etf'].sort(function(a, b) { return b.score - a.score; });
 
-    // --- 3. 依照配額制進行選股 ---
-    for (var j = 0; j < tsP.length; j++) {
-      var cand = tsP[j];
-      var p = cand.s.pool; // 'tw', 'us', 或 'etf'
+    var sel = [];
+
+    // --- 3. 從各池中挑選最強的王者 ---
+    // 建立獨立抽卡邏輯，確保跨市場相關性濾網依然有效
+    function pickFromPool(poolName) {
+      var candidates = pools[poolName];
+      var quota = quotas[poolName];
+      var picked = 0;
       
-      if (!p) p = 'us'; // 防呆機制
-      
-      if (counts[p] >= quotas[p]) continue; // 該池名額滿了就跳過
-      
-      if (sel.every(function(x) { return Math.abs(calcCorr(cand.s.c, x.s.c, scoreM)) < ct; })) {
-        sel.push(cand);
-        counts[p]++;
+      for (var j = 0; j < candidates.length; j++) {
+        if (picked >= quota) break; // 該池名額滿了就停止
+        var cand = candidates[j];
+        
+        // 相關性檢查 (與目前已入選的所有標的做比較)
+        if (sel.every(function(x) { return Math.abs(calcCorr(cand.s.c, x.s.c, scoreM)) < ct; })) {
+          sel.push(cand);
+          picked++;
+        }
       }
-      
-      // 三個池子都滿了就提前結束
-      if (counts['tw'] === qTW && counts['us'] === qUS && counts['etf'] === qETF) break;
     }
 
+    // 依序進房挑選 (誰先挑不影響結果，因為名額是固定的)
+    pickFromPool('us');
+    pickFromPool('tw');
+    pickFromPool('etf');
+
     // --- 4. 防禦資產填補空缺 ---
-    // 如果因為大跌導致選不滿總名額，剩下的空缺全數交給防禦資產 (TLT/GLD/SGOV)
+    // 如果某個池子因為大跌 (破 60MA) 選不滿名額，空缺自動由防禦資產遞補
     var slots = totalQuota - sel.length;
     if (slots > 0) {
       var defCands = sc2.filter(function(r) {
@@ -1209,6 +1234,7 @@ function runBTcore(mh, mode) {
         slots--; 
       }
     }
+  
 
     
 
