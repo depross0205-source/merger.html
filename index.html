@@ -573,7 +573,11 @@ tr:hover{background:var(--sf2)}
     <div class="g3">
       <div class="fi"><label>Start</label><input type="text" id="btS" placeholder="YYYY-MM"></div>
       <div class="fi"><label>End</label><input type="text" id="btE" placeholder="YYYY-MM"></div>
-      <div class="fi"><label>Max Hold</label><input type="number" id="btH" value="3" min="1" max="10"></div>
+            <div class="fi"><label>Max Hold (總名額)</label><input type="number" id="btH" value="5" min="1" max="20" disabled style="opacity:0.5" title="由下方配額自動加總"></div>
+      <div class="fi"><label>台股配額</label><input type="number" id="btQuotaTW" value="2" min="0" max="10" onchange="updTotalH()"></div>
+      <div class="fi"><label>美股配額</label><input type="number" id="btQuotaUS" value="2" min="0" max="10" onchange="updTotalH()"></div>
+      <div class="fi"><label>ETF 配額</label><input type="number" id="btQuotaETF" value="1" min="0" max="10" onchange="updTotalH()"></div>
+
       <div class="fi"><label>Capital</label><input type="number" id="btCap" value="100000"></div>
       <div class="fi"><label>Cost(%)</label><input type="number" id="btC" value="0.3" step="0.1"></div>
       <div class="fi"><label>TNX Spread(%)</label><input type="number" id="btSpread" value="0.5" step="0.1"></div>
@@ -676,7 +680,12 @@ tr:hover{background:var(--sf2)}
 // ============================================================================
 // 台股動能選股系統 V2.0 Experimental (終極修復完整版)
 // ============================================================================
-var WEEKLY={},MONTHLY={},DAILY={},BENCH_MONTHLY=[],TNX_MONTHLY=[];
+function updTotalH() {
+  var t = gv('btQuotaTW') + gv('btQuotaUS') + gv('btQuotaETF');
+  if ($('btH')) $('btH').value = t;
+}
+
+   var WEEKLY={},MONTHLY={},DAILY={},BENCH_MONTHLY=[],TNX_MONTHLY=[];
 var RAW_SCORES={},BT_RESULT=null,CHART={},CACHE_BUILT=false,CACHE_TS=null,SKIP_MO=false,CACHE_SKIP_MO=false,CORR_WIN=24;
 var N_TREND=60; const MOM_CONSISTENCY_MULT=1.2; var REBAL_FREQ="1";
 
@@ -705,7 +714,34 @@ function updCount(chip){var ib=chip.closest('.ib');if(ib)updCountByIb(ib);}
 function updCountByIb(ib){var all=ib.querySelectorAll('[data-code]'),act=ib.querySelectorAll('[data-on="1"]');var ih=ib.previousElementSibling;if(ih){var ic=ih.querySelector('.ic');if(ic)ic.textContent=act.length+'/'+all.length;}}
 function updAllCounts(){document.querySelectorAll('.ib').forEach(function(ib){updCountByIb(ib);});}
 function addCustom(){var raw=$('cusT').value.trim().toUpperCase();var isUS=$('cusUS')&&$('cusUS').checked;var code=isUS?raw:raw.replace('.TW','');if(!code)return;if(document.querySelector('[data-code="'+code+'"]'))return;var name=$('cusN').value.trim()||code;var chip=document.createElement('span');chip.className='sc act'+(isUS?' usc':'');chip.setAttribute('onclick',"toggleStock('"+code+"')");chip.dataset.code=code;chip.dataset.type='mid';chip.dataset.tw=isUS?'0':'1';chip.dataset.on='1';chip.innerHTML='<span class="cc">'+code+'</span><span class="cn">'+name+'</span><span class="cd" onclick="event.stopPropagation();deleteStock(\''+code+'\')">x</span>';var ibs=document.querySelectorAll('.ib');if(ibs.length)ibs[0].appendChild(chip);$('cusT').value='';$('cusN').value='';updAllCounts();}
-function getEnabledStocks(){var result=[];document.querySelectorAll('[data-code][data-on="1"]').forEach(function(el){var cn=el.querySelector('.cn');result.push({c:el.dataset.code,n:cn?cn.textContent:'',type:el.dataset.type,tw:el.dataset.tw==='1'});});return result;}
+function getEnabledStocks() {
+  var result = [];
+  document.querySelectorAll('[data-code][data-on="1"]').forEach(function(el) {
+    var cn = el.querySelector('.cn');
+    var code = el.dataset.code;
+    var tw = el.dataset.tw === '1';
+    
+    // 決定所屬池子 (Pool)
+    var pool = 'us'; // 預設為美股
+    if (tw) pool = 'tw'; // 台股
+    // 檢查是否為 US-ETF (利用你原本設定的 data-type 或是直接用名稱判斷)
+    // 假設你在設定股池時，ETF 的 span 都包在 id="ib0" 或 id="ib_ish" 裡面
+    var parentIb = el.closest('.ib');
+    if (parentIb && (parentIb.id === 'ib0' || parentIb.id === 'ib_ish')) {
+      pool = 'etf';
+    }
+    
+    result.push({ 
+      c: code, 
+      n: cn ? cn.textContent : '', 
+      type: el.dataset.type, 
+      tw: tw,
+      pool: pool 
+    });
+  });
+  return result;
+}
+
 function getStockName(code){var el=document.querySelector('[data-code="'+code+'"] .cn');return el?el.textContent:code;}
 function getWeightMode(){var r=document.querySelector('input[name="wtMode"]:checked');return r?r.value:'eq';}
 
@@ -1118,25 +1154,63 @@ function runBTcore(mh, mode) {
       records.push({ month: sigM, period: periodStr, nav: nav, bNav: bNav, holdings: { CASH: 1.0 }, pRet: 0, hurdle: hurdle, stockRets: {} });
       holdings = { CASH: 1.0 }; continue;
     }
+    // --- 1. 取得各池子配額 ---
+    var qTW = parseInt($('btQuotaTW') ? $('btQuotaTW').value : '2') || 0;
+    var qUS = parseInt($('btQuotaUS') ? $('btQuotaUS').value : '2') || 0;
+    var qETF = parseInt($('btQuotaETF') ? $('btQuotaETF').value : '1') || 0;
+    var quotas = { 'tw': qTW, 'us': qUS, 'etf': qETF };
+    var totalQuota = qTW + qUS + qETF; // 動態計算總名額，取代原本的 mh
 
-    var tsP = valid.filter(function(r) { return r.r240 !== null && r.r240 > hurdle && DEFENSIVE.indexOf(r.s.c) === -1; });
+    // --- 2. 產生候選名單，並加入「價格 > 60MA」的硬門檻 ---
+    var tsP = valid.filter(function(r) { 
+      var passMom = r.r240 !== null && r.r240 > hurdle && DEFENSIVE.indexOf(r.s.c) === -1;
+      if (!passMom) return false;
+      
+      var ma60 = calcMA(DAILY[r.s.c], scoreM, 60);
+      var currentPrice = getPriceOnDate(DAILY[r.s.c], scoreM);
+      if (!ma60 || !currentPrice || currentPrice < ma60) return false; // 破季線直接淘汰
+      
+      return true;
+    });
+
     var sel = [];
+    var counts = { 'tw': 0, 'us': 0, 'etf': 0 };
+
+    // --- 3. 依照配額制進行選股 ---
     for (var j = 0; j < tsP.length; j++) {
-      if (sel.length >= mh) break;
       var cand = tsP[j];
-      if (indExitOn && isBearishRegime(DAILY[cand.s.c], scoreM, 60)) continue;
-      if (sel.every(function(x) { return Math.abs(calcCorr(cand.s.c, x.s.c, scoreM)) < ct; })) sel.push(cand);
+      var p = cand.s.pool; // 'tw', 'us', 或 'etf'
+      
+      if (!p) p = 'us'; // 防呆機制
+      
+      if (counts[p] >= quotas[p]) continue; // 該池名額滿了就跳過
+      
+      if (sel.every(function(x) { return Math.abs(calcCorr(cand.s.c, x.s.c, scoreM)) < ct; })) {
+        sel.push(cand);
+        counts[p]++;
+      }
+      
+      // 三個池子都滿了就提前結束
+      if (counts['tw'] === qTW && counts['us'] === qUS && counts['etf'] === qETF) break;
     }
 
-    var slots = mh - sel.length;
+    // --- 4. 防禦資產填補空缺 ---
+    // 如果因為大跌導致選不滿總名額，剩下的空缺全數交給防禦資產 (TLT/GLD/SGOV)
+    var slots = totalQuota - sel.length;
     if (slots > 0) {
       var defCands = sc2.filter(function(r) {
         if (r.r240 === null) return false;
         if (r.s.c === 'SGOV') return r.r240 > 0;
         return (r.s.c === 'TLT' || r.s.c === 'GLD') && r.r240 > hurdle + 0.01;
       }).sort(function(a, b) { return b.r240 - a.r240; });
-      for (var jd = 0; jd < defCands.length && slots > 0; jd++) { sel.push(defCands[jd]); slots--; }
+      
+      for (var jd = 0; jd < defCands.length && slots > 0; jd++) { 
+        sel.push(defCands[jd]); 
+        slots--; 
+      }
     }
+
+    
 
     var exposure = 1.0;
     if (regimeOn) {
