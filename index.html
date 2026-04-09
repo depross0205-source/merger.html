@@ -1148,9 +1148,8 @@ function runBTcore(mh, mode) {
   var rawS = $('btS') ? ($('btS').value || '').trim().slice(0, 10) : '';
   var rawE = $('btE') ? ($('btE').value || '').trim().slice(0, 10) : '';
   var lagEl = document.querySelector('input[name="lagMode"]:checked');
-  var LAG = lagEl ? parseInt(lagEl.value) : 1; // 這裡的單位正式回歸「交易日」
+  var LAG = lagEl ? parseInt(lagEl.value) : 1; 
 
-  // 因為 LAG 改為天數，不需要在月份陣列 allM 裡扣除 LAG，只要確保有 prevM 即可 (MIN = 1)
   var MIN = 1, cS = MIN;
   if (rawS) { 
     for (var i = cS; i < allM.length; i++) { 
@@ -1179,11 +1178,9 @@ function runBTcore(mh, mode) {
   var DEFENSIVE = ['TLT', 'GLD', 'SGOV'];
 
   for (var idx = cS; idx <= cE; idx++) {
-    var sigM = allM[idx];            // 本期結算日
-    var prevM = allM[idx - 1];       // 買進基準日 (上期結算日)
+    var sigM = allM[idx];            
+    var prevM = allM[idx - 1];       
     
-    // 【核心修正：區塊二】將 LAG 視為「往前推 N 個交易日」
-    // 透過 getPrevWorkDay 在大盤日線中精準找到 T-1 或 T-2 的日期
     var scoreM = getPrevWorkDay(refDaily, prevM, LAG);
 
     var hurdle = getHurdle(scoreM);
@@ -1207,10 +1204,6 @@ function runBTcore(mh, mode) {
     var quotas = { 'tw': qTW, 'us': qUS, 'etf': qETF };
     var totalQuota = qTW + qUS + qETF; 
 
-    // --- 2. 分池過濾與「各自排序」 ---
-    // 建立三個獨立的候選房間
-        // --- 2. 分池過濾與「各自排序」 ---
-    // 建立三個獨立的候選房間
     var pools = { 'tw': [], 'us': [], 'etf': [] };
     var useMA60 = $('ma60Filter') ? $('ma60Filter').value === 'on' : true;
 
@@ -1225,34 +1218,25 @@ function runBTcore(mh, mode) {
       if (!passMA) return;
       
       var p = r.s.pool; 
-
-      // 只允許三大池的股票進入排序房間，排除 other (如中日股)
       if (p === 'tw' || p === 'us' || p === 'etf') {
         if (pools[p]) pools[p].push(r);
       }
     });
 
-
-
-    // 破除大鍋炒！三個池子「各自」依分數高低獨立排序
     pools['tw'].sort(function(a, b) { return b.score - a.score; });
     pools['us'].sort(function(a, b) { return b.score - a.score; });
     pools['etf'].sort(function(a, b) { return b.score - a.score; });
 
     var sel = [];
 
-    // --- 3. 從各池中挑選最強的王者 ---
-    // 建立獨立抽卡邏輯，確保跨市場相關性濾網依然有效
     function pickFromPool(poolName) {
       var candidates = pools[poolName];
       var quota = quotas[poolName];
       var picked = 0;
       
       for (var j = 0; j < candidates.length; j++) {
-        if (picked >= quota) break; // 該池名額滿了就停止
+        if (picked >= quota) break; 
         var cand = candidates[j];
-        
-        // 相關性檢查 (與目前已入選的所有標的做比較)
         if (sel.every(function(x) { return Math.abs(calcCorr(cand.s.c, x.s.c, scoreM)) < ct; })) {
           sel.push(cand);
           picked++;
@@ -1260,13 +1244,10 @@ function runBTcore(mh, mode) {
       }
     }
 
-    // 依序進房挑選 (誰先挑不影響結果，因為名額是固定的)i
     pickFromPool('us');
     pickFromPool('tw');
     pickFromPool('etf');
 
-    // --- 4. 防禦資產填補空缺 ---
-    // 如果某個池子因為大跌 (破 60MA) 選不滿名額，空缺自動由防禦資產遞補
     var slots = totalQuota - sel.length;
     if (slots > 0) {
       var defCands = sc2.filter(function(r) {
@@ -1280,15 +1261,14 @@ function runBTcore(mh, mode) {
         slots--; 
       }
     }
-  
 
-    
-
+    // 💡 1. 大盤風控與曝光度設定
     var exposure = 1.0;
-    if (regimeOn) {
-      if (isBearishRegime(refDaily, scoreM, 60)) exposure = regimeExp / 100;
+    if (regimeOn && isBearishRegime(refDaily, scoreM, 60)) {
+      exposure = regimeExp / 100;
     }
 
+    // 💡 2. 產生放空候選名單 (Short Side)
     var selS = [];
     if (shortN > 0 && sel.length > 0) {
       var longMap = {}; sel.forEach(function(r) { longMap[r.s.c] = 1; });
@@ -1300,40 +1280,45 @@ function runBTcore(mh, mode) {
         if (selS.every(function(x) { return Math.abs(calcCorr(candS.s.c, x.s.c, scoreM)) < ct; })) selS.push(candS);
       }
     }
-    // 💡 1. 決定本期目標權重 (Target) 
+
+    // 💡 3. 完美融合 Long/Short 與 CapMode 的目標權重 (Target)
     var target = {};
-    if (!sel.length) { target = { CASH: 1.0 }; }
-    else {
+    if (!sel.length) { 
+      target['CASH'] = 1.0; 
+    } else {
       var is1330 = capMode === '1330';
       var lScale = is1330 ? 1.0 : 0.5, sScale = is1330 ? 0.3 : 0.5;
+      
       if (mode === 'rank') {
         var ldenom = sel.length * (sel.length + 1) / 2;
-        sel.forEach(function(r, i) { target[r.s.c] = lScale * (sel.length - i) / ldenom * exposure; });
+        sel.forEach(function(r, i) { target[r.s.c] = lScale * ((sel.length - i) / ldenom) * exposure; });
       } else {
-        var lw = lScale / sel.length * exposure;
+        var lw = (lScale / sel.length) * exposure;
         sel.forEach(function(r) { target[r.s.c] = lw; });
       }
-      if (selS.length) {
+      
+      if (selS.length > 0) {
         var sdenom = mode === 'rank' ? selS.length * (selS.length + 1) / 2 : selS.length;
-        selS.forEach(function(r, i) { target[r.s.c] = -sScale * (mode === 'rank' ? (selS.length - i) / sdenom : 1 / sdenom); });
+        selS.forEach(function(r, i) { target[r.s.c] = -sScale * (mode === 'rank' ? ((selS.length - i) / sdenom) : 1 / sdenom) * exposure; });
       }
     }
 
-    var totalW = 0; Object.keys(target).forEach(function(c) { totalW += target[c]; });
+    // 計算剩餘現金部位
+    var totalW = 0; 
+    Object.keys(target).forEach(function(c) { totalW += target[c]; });
     var cashW = 1.0 - totalW;
-    if (cashW > 0.001) target['CASH'] = cashW;
+    if (cashW > 0.001) target['CASH'] = (target['CASH'] || 0) + cashW;
 
-    // 💡 2. 計算換手率與真實摩擦成本 (在月初換股的瞬間產生的成本)
+    // 💡 4. 計算換手率與真實摩擦成本 (Cost + Impact)
     var turnover = 0;
     var allT = new Set([...Object.keys(holdings), ...Object.keys(target)]);
     allT.forEach(function(c) {
-      var oldW = holdings[c] || 0; // 上個月底漂移後的最終權重
+      var oldW = holdings[c] || 0; 
       var newW = target[c] || 0;
       turnover += Math.abs(newW - oldW);
     });
     turnover /= 2;
 
-    // 平滑且無雙重懲罰的衝擊成本
     var baseSlippage = 0.001; 
     var impactMultiplier = Math.max(1, Math.pow(turnover / 0.2, 1.5)); 
     var impactCost = baseSlippage * impactMultiplier;
@@ -1342,27 +1327,28 @@ function runBTcore(mh, mode) {
     // 先扣除期初換股的摩擦成本
     nav *= (1 - friction); 
 
-    // 💡 3. 蒐集本期 (prevM 到 sigM) 持倉標的報價，並把 w 加入給介面顯示
+    // 💡 5. 蒐集本期報價，並【修復 UI 明細表 w 屬性】
     var cashRet = 0;
     if (DAILY['SGOV'] && getPriceOnDate(DAILY['SGOV'], prevM) && getPriceOnDate(DAILY['SGOV'], sigM)) {
       var s0 = getPriceOnDate(DAILY['SGOV'], prevM), s1 = getPriceOnDate(DAILY['SGOV'], sigM);
       cashRet = s1 / s0 - 1;
     } else {
       var cr = getTNXRate(scoreM), cashDivisor = (freq === "2") ? 24 : 12;
-      var CASH_FACTOR = 0.7; // 保守折算
+      var CASH_FACTOR = 0.7; 
       cashRet = (cr * CASH_FACTOR) / cashDivisor; 
     }
 
     var stockRets = {};
     Object.keys(target).forEach(function(c) {
-      if (c === 'CASH') { stockRets[c] = { ret: cashRet, w: target[c] }; } 
-      else {
+      if (c === 'CASH') { 
+        stockRets[c] = { ret: cashRet, w: target[c] }; 
+      } else {
         var p0 = getPriceOnDate(DAILY[c], prevM), p1 = getPriceOnDate(DAILY[c], sigM);
         stockRets[c] = { ret: (p0 && p1 && p0 > 0) ? (p1 / p0 - 1) : null, w: target[c] };
       }
     });
 
-    // 💡 4. 結算本期持倉 (Target) 的真實報酬 (防呆機制：缺資料強制轉現金)
+    // 💡 6. 結算本期真實報酬 (防呆機制：缺資料強制轉現金)
     var pRet = 0, validTarget = {}, forcedCash = 0;
     for (var c in target) {
       var w = target[c], rData = stockRets[c];
@@ -1371,19 +1357,18 @@ function runBTcore(mh, mode) {
     }
     if (forcedCash > 0) validTarget['CASH'] = (validTarget['CASH'] || 0) + forcedCash;
 
-    // 🛡️ 機構級防呆：防止極端黑天鵝導致分母歸零
     if (!isFinite(pRet) || pRet <= -0.9999) pRet = -0.9999; 
     
-    // 更新淨值 (享受本期報酬)
+    // 更新淨值
     nav *= (1 + pRet);
 
-    // 💡 5. 計算期末自然漂移權重 (Drift)
+    // 💡 7. 計算期末自然漂移權重 (Drift)
     var drifted = {};
     for (var c in validTarget) {
       drifted[c] = (validTarget[c] * (1 + (stockRets[c]?.ret || 0))) / (1 + pRet);
     }
 
-    // 💡 6. 結算大盤與紀錄保存
+    // 💡 8. 結算大盤與紀錄保存
     var b0 = getPriceOnDate(refDaily, prevM), b1 = getPriceOnDate(refDaily, sigM);
     if (b0 && b1 && b0 > 0) bNav *= (1 + (b1 / b0 - 1));
 
@@ -1392,12 +1377,12 @@ function runBTcore(mh, mode) {
     
     records.push({ month: sigM, period: periodStr, nav: nav, bNav: bNav, holdings: hCopy, pRet: pRet, hurdle: hurdle, stockRets: stockRets });
 
-    // 💡 7. 狀態傳承：將漂移後的權重正式指派給 holdings，帶到下一個月初！
+    // 💡 9. 狀態傳承
     holdings = drifted;
-  }
+  } // <== 這個括號就是上一版遺落的寶藏
   return records.length >= 6 ? records : null;
+}
 
-    
 
 
 
