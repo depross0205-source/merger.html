@@ -713,11 +713,18 @@ function buildProxies(){var p=$('proxyUrl')?$('proxyUrl').value.trim():'';if(p&&
 async function fp(url,proxies){var last;for(var i=0;i<proxies.length;i++){try{var r=await fetch(proxies[i]+encodeURIComponent(url));if(!r.ok)throw new Error('HTTP '+r.status);return r;}catch(e){last=e;}}throw last||new Error('all proxies failed');}
 function buildTicker(s){if(!s.tw)return s.c;if(s.c.charAt(0)==='^'||s.c.indexOf('.')>=0)return s.c;return s.c+'.TW';}
 
-// 核心抓取函數 (恢復 max 全歷史抓取)
 async function fetchOHLCV(s, interval, range = 'max') {
   const tk = buildTicker(s);
   const proxy = $('proxyUrl').value.trim();
-  const url = `${proxy}${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${tk}?range=${range}&interval=${interval}`)}`;
+  
+  let queryStr = `range=${range}&interval=${interval}`;
+  if (range === 'max') {
+    const nowUnix = Math.floor(Date.now() / 1000);
+    // 強迫使用絕對時間戳，破解 Yahoo 隱形限制
+    queryStr = `period1=0&period2=${nowUnix}&interval=${interval}`;
+  }
+  
+  const url = `${proxy}${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${tk}?${queryStr}`)}`;
   
   const r = await fetch(url);
   const j = await r.json();
@@ -726,7 +733,7 @@ async function fetchOHLCV(s, interval, range = 'max') {
   
   return ch.timestamp.map((ts, i) => {
     const q = ch.indicators.quote[0];
-    const adj = ch.indicators.adjclose?.[0].adjclose[i]; // 還原權值
+    const adj = ch.indicators.adjclose?.[0].adjclose[i];
     return {
       date: new Date(ts * 1000).toISOString().slice(0, 10),
       o: q.open[i], h: q.high[i], l: q.low[i], 
@@ -735,44 +742,16 @@ async function fetchOHLCV(s, interval, range = 'max') {
   }).filter(v => v.c != null);
 }
 
-// 恢復 V1.8 專屬：修正 Yahoo 月線時差的函數
-async function fetchMonthly(tkOrS, range = 'max') {
-  const tk = typeof tkOrS === 'string' ? tkOrS : buildTicker(tkOrS);
-  const proxy = $('proxyUrl').value.trim();
-  const url = `${proxy}${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${tk}?range=${range}&interval=1mo`)}`;
-  
-  const r = await fetch(url);
-  const j = await r.json();
-  const ch = j.chart?.result?.[0];
-  if (!ch || !ch.timestamp) throw new Error('No Data');
-  
-  const out = [];
-  ch.timestamp.forEach((ts, i) => {
-    const q = ch.indicators.quote[0];
-    const adj = ch.indicators.adjclose?.[0].adjclose[i];
-    const c = adj != null ? adj : q.close[i];
-    if (c && c > 0) {
-      // 關鍵修復：Yahoo 月線時間平移 1 個月
-      const d = new Date(ts * 1000);
-      d.setMonth(d.getMonth() + 1); 
-      out.push({ date: d.toISOString().slice(0, 7), c: +c.toFixed(4) });
-    }
-  });
-  
-  const seen = {}; out.forEach(p => seen[p.date] = p);
-  return Object.values(seen).sort((a, b) => a.date.localeCompare(b.date));
-}
 
-// 在 fetchAll 中，我們直接抓取日線，並修復 Loading 文字進度
+// 恢復 V1.8 專屬：修正 Yahoo 月線時差的函數
 async function fetchAll() {
   const stocks = getEnabledStocks();
   if(!stocks.length) return alert('請先選擇股池');
-  showL('抓取全歷史資料庫...'); 
+  showL('抓取全歷史日線資料庫 (放慢速度確保穩定)...'); 
   $('fetchProg').classList.remove('hidden');
 
   let success = 0;
   for (let i = 0; i < stocks.length; i++) {
-    // 修復 1：在 Loading 畫面同步顯示抓取進度與股票代號
     $('loadTxt').textContent = '抓取中: ' + stocks[i].c + ' (' + (i+1) + '/' + stocks.length + ')'; 
     try {
       DAILY[stocks[i].c] = await fetchOHLCV(stocks[i], '1d', 'max');
@@ -780,12 +759,12 @@ async function fetchAll() {
       $('fetchFill').style.width = `${((i+1)/stocks.length)*100}%`;
       updFetchStat();
     } catch(e) { console.error(stocks[i].c, e); }
-    await new Promise(r => setTimeout(r, 600)); 
+    // 延長間隔至 2 秒，避免 Proxy 崩潰
+    await new Promise(r => setTimeout(r, 2000)); 
   }
   
-  // 修復 2：基準與利率也改用日線，徹底避開 Yahoo 月線 API 的時差 Bug
   try {
-    $('loadTxt').textContent = '同步大盤基準與公債利率...';
+    $('loadTxt').textContent = '同步大盤基準與公債利率 (日線)...';
     DAILY['^TNX'] = await fetchOHLCV({c:'^TNX', tw:false}, '1d', 'max');
     DAILY['^TWII'] = await fetchOHLCV({c:'^TWII', tw:true}, '1d', 'max'); 
   } catch(e) { console.error("Bench Fetch Error", e); }
@@ -793,6 +772,8 @@ async function fetchAll() {
   hideL(); $('fetchProg').classList.add('hidden');
   await buildCache(); await saveAllToDB();
 }
+
+
 
 async function fetchUpdate() {
   var stocks = getEnabledStocks();
@@ -860,7 +841,16 @@ function calcMA(bars, dateStr, period) {
   for (let i = idx - period + 1; i <= idx; i++) sum += bars[i].c;
   return sum / period;
 }
-function getPriceOnDate(bars, dateStr) { if (!bars) return null; let bar = bars.find(b => b.date === dateStr); return bar ? bar.c : null; }
+function getPriceOnDate(bars, dateStr) { 
+  if (!bars || !bars.length || dateStr < bars[0].date) return null; 
+  let best = bars[0].c;
+  for(let i=0; i<bars.length; i++) { 
+    if (bars[i].date <= dateStr) best = bars[i].c; 
+    else break; 
+  }
+  return best; 
+}
+
 function getPrevWorkDay(bars, dateStr, offset = 5) {
   if (!bars) return dateStr; let idx = bars.findIndex(b => b.date === dateStr);
   if (idx < offset) return bars[0].date; return bars[idx - offset].date;
@@ -879,29 +869,29 @@ function getPreciseRebalanceDates(bars, freq) {
 
   function processMonth(mBars) {
     if(!mBars.length) return;
-    // 若為半月回測 (freq == 2)，抓取 >= 15日 的第一筆交易日
+    // 半月回測：尋找 >= 15日的第一個交易日
     if (freq === "2") {
       let midBar = mBars.find(b => parseInt(b.date.slice(8, 10)) >= 15);
       if (midBar) dates.push(midBar.date);
     }
-    // 不論全月或半月，都統一強制抓取每個月的「最後一個交易日」
+    // 不論全月或半月，都統一強制抓取「該月最後一筆」
     dates.push(mBars[mBars.length - 1].date);
   }
 
   bars.forEach(bar => {
     const ym = bar.date.slice(0, 7);
     if (ym !== currentMonth) {
-      if (currentMonth !== "") processMonth(monthBars); // 換月時，結算上個月
+      if (currentMonth !== "") processMonth(monthBars); // 換月時結算上一月
       currentMonth = ym;
       monthBars = [];
     }
     monthBars.push(bar);
   });
-  if (monthBars.length > 0) processMonth(monthBars); // 處理最後一個月
+  if (monthBars.length > 0) processMonth(monthBars); // 結算最後一個月
   
-  // 使用 Set 去除可能重複的日期 (例如該月只有一天交易)，並確保排序
-  return [...new Set(dates)].sort();
+  return [...new Set(dates)].sort(); // 確保日期不重複且依序排列
 }
+
 
 // 合併新舊 K 線資料並去重複、重新排序
 function mergeArr(oldBars, newBars) {
@@ -1547,3 +1537,4 @@ window.onload = async function() {
 
 </body>
 </html>
+ㄣ ㄣ
