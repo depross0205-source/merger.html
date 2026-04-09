@@ -1050,26 +1050,18 @@ var refDaily = DAILY[masterTicker]; if (!refDaily) return null;
   // 確保 allM 裡面只會有絕對乾淨的「換股日」
   var allM = getPreciseRebalanceDates(refDaily, freq);
   
-  var rawS = $('btS') ? ($('btS').value || '').trim().slice(0, 10) : '';
+   var rawS = $('btS') ? ($('btS').value || '').trim().slice(0, 10) : '';
   var rawE = $('btE') ? ($('btE').value || '').trim().slice(0, 10) : '';
   var lagEl = document.querySelector('input[name="lagMode"]:checked');
-  var LAG = lagEl ? parseInt(lagEl.value) : 1; // 這裡的單位是「期 (Period)」
+  var LAG = lagEl ? parseInt(lagEl.value) : 1;
 
-  // 確保起始索引 cS 至少能涵蓋所需的 LAG
-  var MIN = 1, cS = MIN + LAG;
-  if (rawS) { 
-    for (var i = cS; i < allM.length; i++) { 
-      if (allM[i] >= rawS) { cS = i; break; } 
-    } 
-  }
-  
+  // 因為 LAG 現在代表天數，所以 allM 陣列索引只要確保有 prevM (idx - 1) 即可，所以 cS = 1
+  var cS = 1;
+  if (rawS) { for (var i = cS; i < allM.length; i++) { if (allM[i] >= rawS) { cS = i; break; } } }
   var cE = allM.length - 1;
-  if (rawE) { 
-    for (var i2 = cE; i2 >= cS; i2--) { 
-      if (allM[i2] <= rawE) { cE = i2; break; } 
-    } 
-  }
+  if (rawE) { for (var i2 = cE; i2 >= cS; i2--) { if (allM[i2] <= rawE) { cE = i2; break; } } }
   if (cS > cE) return null;
+
 
   var INIT = gv('btCap') || 100000, COST = (gv('btC') || 0.3) / 100, ct = gv('corrT') || 0.75;
   var shortN = parseInt($('btSN') ? $('btSN').value : '0') || 0;
