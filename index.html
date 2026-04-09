@@ -1289,6 +1289,7 @@ function runBTcore(mh, mode) {
       var is1330 = capMode === '1330';
       var lScale = is1330 ? 1.0 : 0.5, sScale = is1330 ? 0.3 : 0.5;
       
+      // 配置多頭 (Long)
       if (mode === 'rank') {
         var ldenom = sel.length * (sel.length + 1) / 2;
         sel.forEach(function(r, i) { target[r.s.c] = lScale * ((sel.length - i) / ldenom) * exposure; });
@@ -1297,6 +1298,7 @@ function runBTcore(mh, mode) {
         sel.forEach(function(r) { target[r.s.c] = lw; });
       }
       
+      // 配置空頭 (Short)
       if (selS.length > 0) {
         var sdenom = mode === 'rank' ? selS.length * (selS.length + 1) / 2 : selS.length;
         selS.forEach(function(r, i) { target[r.s.c] = -sScale * (mode === 'rank' ? ((selS.length - i) / sdenom) : 1 / sdenom) * exposure; });
@@ -1324,9 +1326,6 @@ function runBTcore(mh, mode) {
     var impactCost = baseSlippage * impactMultiplier;
     var friction = (turnover * COST) + impactCost;
 
-    // 先扣除期初換股的摩擦成本
-    nav *= (1 - friction); 
-
     // 💡 5. 蒐集本期報價，並【修復 UI 明細表 w 屬性】
     var cashRet = 0;
     if (DAILY['SGOV'] && getPriceOnDate(DAILY['SGOV'], prevM) && getPriceOnDate(DAILY['SGOV'], sigM)) {
@@ -1348,41 +1347,42 @@ function runBTcore(mh, mode) {
       }
     });
 
-    // 💡 6. 結算本期真實報酬 (防呆機制：缺資料強制轉現金)
-    var pRet = 0, validTarget = {}, forcedCash = 0;
+    // 💡 6. 結算本期真實毛報酬 (Gross Return) (防呆機制：缺資料強制轉現金)
+    var grossRet = 0, validTarget = {}, forcedCash = 0;
     for (var c in target) {
       var w = target[c], rData = stockRets[c];
       if (rData.ret === null) { forcedCash += w; } 
-      else { pRet += w * rData.ret; validTarget[c] = w; }
+      else { grossRet += w * rData.ret; validTarget[c] = w; }
     }
     if (forcedCash > 0) validTarget['CASH'] = (validTarget['CASH'] || 0) + forcedCash;
 
-    if (!isFinite(pRet) || pRet <= -0.9999) pRet = -0.9999; 
+    if (!isFinite(grossRet) || grossRet <= -0.9999) grossRet = -0.9999; 
     
-    // 更新淨值
-    nav *= (1 + pRet);
+    // 💡 7. 統一口徑：計算真實淨報酬 (Net Return) 並更新淨值
+    // 正確的淨報酬計算：(1 - 摩擦成本) * (1 + 毛報酬) - 1
+    var netRet = (1 - friction) * (1 + grossRet) - 1;
+    nav *= (1 + netRet);
 
-    // 💡 7. 計算期末自然漂移權重 (Drift)
+    // 💡 8. 計算期末自然漂移權重 (Drift)
     var drifted = {};
     for (var c in validTarget) {
-      drifted[c] = (validTarget[c] * (1 + (stockRets[c]?.ret || 0))) / (1 + pRet);
+      drifted[c] = (validTarget[c] * (1 + (stockRets[c]?.ret || 0))) / (1 + grossRet);
     }
 
-    // 💡 8. 結算大盤與紀錄保存
+    // 💡 9. 結算大盤與紀錄保存
     var b0 = getPriceOnDate(refDaily, prevM), b1 = getPriceOnDate(refDaily, sigM);
     if (b0 && b1 && b0 > 0) bNav *= (1 + (b1 / b0 - 1));
 
     var hCopy = {}; Object.keys(target).forEach(k => hCopy[k] = target[k]);
     var periodStr = prevM + " ~ " + sigM;
     
-    records.push({ month: sigM, period: periodStr, nav: nav, bNav: bNav, holdings: hCopy, pRet: pRet, hurdle: hurdle, stockRets: stockRets });
+    records.push({ month: sigM, period: periodStr, nav: nav, bNav: bNav, holdings: hCopy, pRet: netRet, hurdle: hurdle, stockRets: stockRets });
 
-    // 💡 9. 狀態傳承
+    // 💡 10. 狀態傳承
     holdings = drifted;
-  } // <== 這個括號就是上一版遺落的寶藏
+  }
   return records.length >= 6 ? records : null;
 }
-
 
 
 
