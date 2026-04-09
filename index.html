@@ -873,14 +873,36 @@ function isBearishRegime(bars, dateStr, period = 60) {
   return price < ma && (prevMA ? ma < prevMA : true);
 }
 function getPreciseRebalanceDates(bars, freq) {
-  const dates = []; let lastYM = "", hasHalf = false;
+  const dates = [];
+  let currentMonth = "";
+  let monthBars = [];
+
+  function processMonth(mBars) {
+    if(!mBars.length) return;
+    // 若為半月回測 (freq == 2)，抓取 >= 15日 的第一筆交易日
+    if (freq === "2") {
+      let midBar = mBars.find(b => parseInt(b.date.slice(8, 10)) >= 15);
+      if (midBar) dates.push(midBar.date);
+    }
+    // 不論全月或半月，都統一強制抓取每個月的「最後一個交易日」
+    dates.push(mBars[mBars.length - 1].date);
+  }
+
   bars.forEach(bar => {
-    const ym = bar.date.slice(0, 7), day = parseInt(bar.date.slice(8, 10));
-    if (ym !== lastYM) { dates.push(bar.date); lastYM = ym; hasHalf = false; }
-    if (freq === "2" && !hasHalf && day >= 15) { if (dates[dates.length - 1] !== bar.date) { dates.push(bar.date); hasHalf = true; } }
+    const ym = bar.date.slice(0, 7);
+    if (ym !== currentMonth) {
+      if (currentMonth !== "") processMonth(monthBars); // 換月時，結算上個月
+      currentMonth = ym;
+      monthBars = [];
+    }
+    monthBars.push(bar);
   });
-  return dates;
+  if (monthBars.length > 0) processMonth(monthBars); // 處理最後一個月
+  
+  // 使用 Set 去除可能重複的日期 (例如該月只有一天交易)，並確保排序
+  return [...new Set(dates)].sort();
 }
+
 // 合併新舊 K 線資料並去重複、重新排序
 function mergeArr(oldBars, newBars) {
   if (!oldBars || !oldBars.length) return newBars || [];
@@ -1193,8 +1215,11 @@ function runBT() {
       var records = runBTcore(mh, mode);
       if (!records) { alert('Not enough data'); hideL(); return; }
       BT_RESULT = { records: records, initial: init, mode: mode, mh: mh };
-      renderBT(records, init, mode);
-      sl('btLog', 'Done: ' + records.length + ' periods', true);
+            renderBT(records, init, mode);
+      var dStart = records[0].month;
+      var dEnd = records[records.length - 1].month;
+      sl('btLog', '回測完成: ' + dStart + ' 至 ' + dEnd + ' (共 ' + records.length + ' 期)', true);
+
     } catch (err) { sl('btLog', 'Error: ' + err.message, false); console.error(err); }
     finally { hideL(); }
   }, 80);
@@ -1215,8 +1240,11 @@ function runCompare() {
         if (recs) results.push({ n: n, recs: recs, k: kpi(recs, init) });
       }
       if (!results.length) { alert('No results'); hideL(); return; }
-      renderCompare(results, init, mode);
-      sl('btLog', 'Compare done: N=1~' + maxN + ' (' + mode + ')', true);
+            renderCompare(results, init, mode);
+      var dStart = results[0].recs[0].month;
+      var dEnd = results[0].recs[results[0].recs.length - 1].month;
+      sl('btLog', '比較完成 N=1~' + maxN + ' | 期間: ' + dStart + ' 至 ' + dEnd, true);
+
     } catch (err) { sl('btLog', 'Error: ' + err.message, false); console.error(err); }
     finally { hideL(); }
   }, 80);
