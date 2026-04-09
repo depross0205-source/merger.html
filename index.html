@@ -1125,17 +1125,15 @@ function isStrictTechnicalPass(code, dateStr) {
   
   return isAbove && isUpward;
 }
-
-
 function calcAllScores(dateStr) {
   var stocks = getEnabledStocks().filter(s => RAW_SCORES[s.c] && RAW_SCORES[s.c][dateStr]);
   if (stocks.length < 3) return [];
 
   const mode = document.getElementById('poolMode').value;
-  var wM=gv('wMom')/100, wB=gv('wBias')/100, wS=gv('wSlope')/100, wV=gv('wVol')/100, wK=gv('wKbar')/100;
+  var wM = gv('wMom') / 100, wB = gv('wBias') / 100, wS = gv('wSlope') / 100, wV = gv('wVol') / 100, wK = gv('wKbar') / 100;
 
   if (mode === 'large') {
-    // --- 大池模式：全局統一計算 ---
+    // 大池模式：不分池，全體標準化
     var rMs=[], rBs=[], rSs=[], rVs=[], rKs=[];
     var infos = stocks.map(s => {
       var raw = RAW_SCORES[s.c][dateStr];
@@ -1148,23 +1146,26 @@ function calcAllScores(dateStr) {
       zm: zMs[i], zb: zBs[i], zs: zSs[i], zv: zVs[i], zk: zKs[i], r240: d.raw.r240
     }));
   } else {
-    // --- 小池模式：分市場獨立計算 (補齊此處邏輯) ---
+    // 小池模式：完全還原 Source 2 邏輯，各市場獨立計算
     var poolGroups = { 'tw': [], 'us': [], 'etf': [], 'other': [] };
     stocks.forEach(s => { if(poolGroups[s.pool]) poolGroups[s.pool].push(s); });
+    
     var finalScores = [];
     Object.keys(poolGroups).forEach(p => {
       var pStocks = poolGroups[p]; if (!pStocks.length) return;
       var rMs=[], rBs=[], rSs=[], rVs=[], rKs=[];
       var infos = pStocks.map(s => {
-        var raw=RAW_SCORES[s.c][dateStr];
+        var raw = RAW_SCORES[s.c][dateStr];
         rMs.push(raw.rm); rBs.push(raw.rb); rSs.push(raw.rs); rVs.push(raw.rv); rKs.push(raw.rk);
-        return {s:s, raw:raw};
+        return {s: s, raw: raw};
       });
+      // 在各池內部進行標準化
       var zMs=crossZ(rMs,99), zBs=crossZ(rBs,2), zSs=crossZ(rSs,99), zVs=crossZ(rVs,2), zKs=crossZ(rKs,99);
-      infos.forEach((d,i) => {
+      infos.forEach((d, i) => {
         finalScores.push({
-          s:d.s, score: (wM*zMs[i]+wB*zBs[i]+wS*zSs[i]+wV*zVs[i]+wK*zKs[i]),
-          zm:zMs[i], zb:zBs[i], zs:zSs[i], zv:zVs[i], zk:zKs[i], r240:d.raw.r240
+          s: d.s, 
+          score: (wM*zMs[i] + wB*zBs[i] + wS*zSs[i] + wV*zVs[i] + wK*zKs[i]),
+          zm: zMs[i], zb: zBs[i], zs: zSs[i], zv: zVs[i], zk: zKs[i], r240: d.raw.r240
         });
       });
     });
@@ -1172,7 +1173,7 @@ function calcAllScores(dateStr) {
   }
 }
 
-  
+
 
 function calcCorr(c1, c2, dateStr) {
   var b1 = DAILY[c1], b2 = DAILY[c2];
@@ -1782,45 +1783,61 @@ function checkDataHealth() {
 async function calcSignal() {
   if (!CACHE_BUILT) { alert('Fetch data first'); return; }
   SKIP_MO = !!($('btSkipMo') && $('btSkipMo').checked);
-  CORR_WIN = parseInt($('corrW') ? $('corrW').value : '24') || 24;
   if (CACHE_SKIP_MO !== SKIP_MO) { await buildCache(); }
   
-  var stocks = getEnabledStocks().filter(function(s) { return RAW_SCORES[s.c]; });
+  var stocks = getEnabledStocks().filter(s => RAW_SCORES[s.c]);
   if (!stocks.length) { alert('No cached data'); return; }
   
   var latestDate = Object.keys(RAW_SCORES[stocks[0].c]).sort().pop();
   var hurdle = getHurdle(latestDate);
-  var scores = calcAllScores(latestDate);
-  var valid = scores.filter(function(r) { return r.score !== null; });
-
-  // 必須宣告防禦性資產，避免崩潰
-  var DEFENSIVE = ['TLT', 'GLD', 'SGOV'];
-
-  // 取得各池子配額
-  var qTW = parseInt($('btQuotaTW') ? $('btQuotaTW').value : '2') || 0;
-  var qUS = parseInt($('btQuotaUS') ? $('btQuotaUS').value : '2') || 0;
-  var qETF = parseInt($('btQuotaETF') ? $('btQuotaETF').value : '1') || 0;
-  var quotas = { 'tw': qTW, 'us': qUS, 'etf': qETF };
-  var totalQuota = qTW + qUS + qETF;
-
-  // 建立三個獨立房間並分發
-  var pools = { 'tw': [], 'us': [], 'etf': [] };
-  valid.forEach(function(r) {
-    var p = r.s.pool;
-    if (p === 'tw' || p === 'us' || p === 'etf') pools[p].push(r);
-  });
-
-  // 各池子獨立排序
-  pools['tw'].sort(function(a, b) { return b.score - a.score; });
-  pools['us'].sort(function(a, b) { return b.score - a.score; });
-  pools['etf'].sort(function(a, b) { return b.score - a.score; });
+  var allScores = calcAllScores(latestDate);
+  
+  const mode = document.getElementById('poolMode').value;
+  const useMA = document.getElementById('ma60Filter').value === 'on';
+  const ct = gv('corrT') || 0.75;
+  const DEFENSIVE = ['TLT', 'GLD', 'SGOV'];
 
   var sel = [];
-  var ct = gv('corrT') || 0.75;
-    var rejectedMap = {};
-  var useMA60 = $('ma60Filter') ? $('ma60Filter').value === 'on' : true;
+  var rejectedMap = {}; 
 
-  // 獨立抽卡邏輯
+  // 1. 檢核所有標的之基本門檻並記錄
+  allScores.forEach(r => {
+    const passTS = r.r240 !== null && r.r240 > hurdle;
+    const maOk = isStrictTechnicalPass(r.s.c, latestDate);
+    if (!passTS) rejectedMap[r.s.c] = "TS 淘汰";
+    else if (useMA && !maOk) rejectedMap[r.s.c] = "季線淘汰";
+  });
+
+  // 2. 挑選入選者
+  if (mode === 'large') {
+    var candidates = allScores.filter(r => !rejectedMap[r.s.c] && !DEFENSIVE.includes(r.s.c)).sort((a,b)=>b.score-a.score);
+    const totalMax = parseInt($('btH').value) || 5;
+    for (var cand of candidates) {
+      if (sel.length >= totalMax) { rejectedMap[cand.s.c] = "總名額已滿"; continue; }
+      if (sel.every(x => Math.abs(calcCorr(cand.s.c, x.s.c, latestDate)) < ct)) sel.push(cand);
+      else rejectedMap[cand.s.c] = "相關性過高";
+    }
+  } else {
+    var subPools = { 'tw': [], 'us': [], 'etf': [] };
+    allScores.filter(r => !rejectedMap[r.s.c] && !DEFENSIVE.includes(r.s.c)).forEach(r => { if(subPools[r.s.pool]) subPools[r.s.pool].push(r); });
+    
+    ['us', 'tw', 'etf'].forEach(pName => {
+      var q = { 'tw': gv('btQuotaTW'), 'us': gv('btQuotaUS'), 'etf': gv('btQuotaETF') }[pName];
+      var list = subPools[pName].sort((a,b)=>b.score-a.score);
+      var picked = 0;
+      for (var cand of list) {
+        if (picked >= q) { rejectedMap[cand.s.c] = "該池配額已滿"; continue; }
+        if (sel.every(x => Math.abs(calcCorr(cand.s.c, x.s.c, latestDate)) < ct)) {
+          sel.push(cand); picked++;
+        } else { rejectedMap[cand.s.c] = "相關性過高"; }
+      }
+    });
+  }
+
+  renderSig(sel, allScores.slice().sort((a,b)=>a.score-b.score).slice(0,3), allScores, latestDate, hurdle);
+  renderST(allScores, hurdle, sel.map(s => s.s.c), rejectedMap, latestDate);
+}
+
   function pickFromPool(poolName) {
     var candidates = pools[poolName];
     var quota = quotas[poolName];
@@ -1950,44 +1967,40 @@ function renderST(all, hurdle, selectedCodes, rejectedMap, scoreM) {
   var zf = v => (v !== null ? (v >= 0 ? '+' : '') + v.toFixed(2) : '-');
   var pf = v => (v !== null ? (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%' : '-');
   
-  // 按分數從高到低排序，讓你知道最強的是誰
-  var sorted = all.sort((a,b) => b.score - a.score);
+  var poolOrder = ['tw', 'us', 'etf'];
+  var poolNames = {'tw': '🇹🇼 台股池排行', 'us': '🇺🇸 美股池排行', 'etf': '🛡️ ETF池排行'};
+  var html = '';
 
-  $('stBody').innerHTML = sorted.map((r, i) => {
-    var passTS = r.r240 !== null && r.r240 > hurdle;
-    var maOk = isStrictTechnicalPass(r.s.c, scoreM);
-    var isSelected = selectedCodes.includes(r.s.c);
-    var conflict = rejectedMap[r.s.c];
+  poolOrder.forEach(pKey => {
+    var pStocks = all.filter(r => r.s.pool === pKey).sort((a,b) => b.score - a.score);
+    if (!pStocks.length) return;
 
-    // 狀態判定
-    var status = "";
-    if (isSelected) status = '<span style="color:var(--gr);font-weight:700">★ 入選</span>';
-    else if (conflict) status = `<span style="color:var(--mu);font-size:10px">🚫 相關性(${conflict})</span>`;
-    else if (!passTS) status = '<span style="color:var(--re)">TS 淘汰(回報不足)</span>';
-    else if (document.getElementById('ma60Filter').value==='on' && !maOk) status = '<span style="color:var(--ye)">季線淘汰</span>';
-    else status = '<span style="color:var(--mu)">名額已滿</span>';
+    html += `<tr><td colspan="12" style="background:var(--sf2); color:var(--wh); font-weight:700; text-align:center; padding:10px; border-bottom:2px solid var(--bd);">${poolNames[pKey]}</td></tr>`;
+    
+    pStocks.forEach((r, i) => {
+      var isSelected = selectedCodes.includes(r.s.c);
+      var reason = rejectedMap[r.s.c] || "名次靠後";
+      var statusHtml = isSelected ? '<span style="color:var(--gr);font-weight:700">★ 已選入</span>' : `<span style="color:var(--mu);font-size:11px">${reason}</span>`;
+      var maOk = isStrictTechnicalPass(r.s.c, scoreM);
 
-    return `<tr>
-      <td class="mono">${i+1}</td>
-      <td class="mono" style="color:${r.s.tw?'var(--tw)':'var(--us)'}">${r.s.c}</td>
-      <td>${r.s.n}</td>
-      <td style="font-size:11px">${status}</td>
-      <td class="mono" style="font-weight:700">${zf(r.score)}</td>
-      <td class="mono">${zf(r.zm)}</td>
-      <td class="mono">${zf(r.zb)}</td>
-      <td class="mono">${zf(r.zs)}</td>
-      <td class="mono">${zf(r.zv)}</td>
-      <td class="mono">${zf(r.zk)}</td>
-      <td class="mono" style="color:${passTS?'var(--gr)':'var(--re)'}">${pf(r.r240)}</td>
-      <td>${maOk?'<span style="color:var(--gr)">Y</span>':'<span style="color:var(--re)">N</span>'}</td>
-    </tr>`;
-  }).join('');
+      html += `<tr>
+        <td class="mono">${i+1}</td>
+        <td class="mono" style="font-weight:700; color:${r.s.tw?'var(--tw)':'var(--us)'}">${r.s.c}</td>
+        <td>${r.s.n}</td>
+        <td>${statusHtml}</td>
+        <td class="mono" style="font-weight:700">${zf(r.score)}</td>
+        <td class="mono">${zf(r.zm)}</td>
+        <td class="mono">${zf(r.zb)}</td>
+        <td class="mono">${zf(r.zs)}</td>
+        <td class="mono">${zf(r.zv)}</td>
+        <td class="mono">${zf(r.zk)}</td>
+        <td class="mono" style="color:${r.r240>hurdle?'var(--gr)':'var(--re)'}">${pf(r.r240)}</td>
+        <td>${maOk?'<span style="color:var(--gr)">Y</span>':'<span style="color:var(--re)">N</span>'}</td>
+      </tr>`;
+    });
+  });
+  $('stBody').innerHTML = html;
 }
-
-
-
-
-
 
 // 初始化
 window.onload = async function() {
