@@ -124,7 +124,7 @@ tr:hover{background:var(--sf2)}
         <button class="bo sm" style="color:var(--tw);border-color:var(--tw)" onclick="selectTW(false)">台股全停</button>
       </div>
     </div>
- <div class="ig"><div class="ih" onclick="toggleInd(this)"><span class="in">[US] US-ETF</span><span class="ic" id="ic0">11/11</span></div><div class="ib" id="ib0">
+ <div class="ig"><div class="ih" onclick="toggleInd(this)"><span class="in">[ETF]ishare ETF</span><span class="ic" id="ic0">18/18</span></div><div class="ib" id="ib0">
 <span class="sc act usc" onclick="toggleStock('SPY')" data-code="SPY" data-type="mid" data-tw="0" data-on="1"><span class="cc">SPY</span><span class="cn">SPY500</span><span class="cd" onclick="event.stopPropagation();deleteStock('SPY')">&times;</span></span>
 <span class="sc act usc" onclick="toggleStock('QQQ')" data-code="QQQ" data-type="mid" data-tw="0" data-on="1"><span class="cc">QQQ</span><span class="cn">NasdaqETF</span><span class="cd" onclick="event.stopPropagation();deleteStock('QQQ')">&times;</span></span>
 <span class="sc act usc" onclick="toggleStock('IWM')" data-code="IWM" data-type="mid" data-tw="0" data-on="1"><span class="cc">IWM</span><span class="cn">SmallCap</span><span class="cd" onclick="event.stopPropagation();deleteStock('IWM')">&times;</span></span>
@@ -136,8 +136,6 @@ tr:hover{background:var(--sf2)}
 <span class="sc act usc" onclick="toggleStock('GLD')" data-code="GLD" data-type="mid" data-tw="0" data-on="1"><span class="cc">GLD</span><span class="cn">Gold</span><span class="cd" onclick="event.stopPropagation();deleteStock('GLD')">&times;</span></span>
 <span class="sc act usc" onclick="toggleStock('SLV')" data-code="SLV" data-type="mid" data-tw="0" data-on="1"><span class="cc">SLV</span><span class="cn">Silver</span><span class="cd" onclick="event.stopPropagation();deleteStock('SLV')">&times;</span></span>
 <span class="sc act usc" onclick="toggleStock('VNQ')" data-code="VNQ" data-type="mid" data-tw="0" data-on="1"><span class="cc">VNQ</span><span class="cn">REIT</span><span class="cd" onclick="event.stopPropagation();deleteStock('VNQ')">&times;</span></span>
-</div></div>
-     <div class="ig"><div class="ih" onclick="toggleInd(this)"><span class="in">[US] iShares ETF (去重)</span><span class="ic" id="ic_ish">7/7</span></div><div class="ib" id="ib_ish">
 <span class="sc act usc" onclick="toggleStock('AGG')" data-code="AGG" data-type="mid" data-tw="0" data-on="1"><span class="cc">AGG</span><span class="cn">US Bond Agg</span><span class="cd" onclick="event.stopPropagation();deleteStock('AGG')">&times;</span></span>
 <span class="sc act usc" onclick="toggleStock('IWF')" data-code="IWF" data-type="mid" data-tw="0" data-on="1"><span class="cc">IWF</span><span class="cn">R1000 Growth</span><span class="cd" onclick="event.stopPropagation();deleteStock('IWF')">&times;</span></span>
 <span class="sc act usc" onclick="toggleStock('IWD')" data-code="IWD" data-type="mid" data-tw="0" data-on="1"><span class="cc">IWD</span><span class="cn">R1000 Value</span><span class="cd" onclick="event.stopPropagation();deleteStock('IWD')">&times;</span></span>
@@ -720,26 +718,26 @@ function getEnabledStocks() {
     var cn = el.querySelector('.cn');
     var code = el.dataset.code;
     var tw = el.dataset.tw === '1';
-    
-    // 精準決定所屬池子 (Pool)
+
+    // 往上找群組的標題文字
+    var igNode = el.closest('.ig');
+    var inSpan = igNode ? igNode.querySelector('.in') : null;
+    var title = inSpan ? inSpan.textContent.toUpperCase() : '';
+
+    // 嚴格正面表列分類
     var pool = 'other'; 
     if (tw) {
-      pool = 'tw';
-    } else {
-      var parentIb = el.closest('.ib');
-      var pid = parentIb ? parentIb.id : '';
-      if (pid === 'ib0' || pid === 'ib_ish') {
-        pool = 'etf';
-      } else if (pid === 'ib1' || pid === 'ib_sp30' || pid === 'ib_sp100' || pid === 'ib_ndx30' || pid === 'ib_sox20') {
-        pool = 'us'; // 只有真正的美國指數群組，才算是美股
-      }
+      pool = 'tw'; // 有 data-tw="1" 的就是台股
+    } else if (title.includes('[ETF]')) {
+      pool = 'etf'; // 標題有 [ETF] 的就是 ETF
+    } else if (title.includes('[US]')) {
+      pool = 'us'; // 標題明確有 [US] 的才是美股
     }
-    
+
     result.push({ c: code, n: cn ? cn.textContent : '', type: el.dataset.type, tw: tw, pool: pool });
   });
   return result;
 }
-
 
 function getStockName(code){var el=document.querySelector('[data-code="'+code+'"] .cn');return el?el.textContent:code;}
 function getWeightMode(){var r=document.querySelector('input[name="wtMode"]:checked');return r?r.value:'eq';}
@@ -1039,16 +1037,16 @@ function calcAllScores(dateStr){
 
   var wM=gv('wMom')/100,wB=gv('wBias')/100,wS=gv('wSlope')/100,wV=gv('wVol')/100,wK=gv('wKbar')/100;
 
-  // 1. 先把所有合格股票依照池子分組
+  // 1. 依照池子分組
   var poolGroups = { 'tw': [], 'us': [], 'etf': [], 'other': [] };
   stocks.forEach(function(s) {
       var p = s.pool || 'other';
-      poolGroups[p].push(s);
+      if(poolGroups[p]) poolGroups[p].push(s);
   });
 
   var finalScores = [];
 
-  // 2. 針對每個池子「獨立」進行動能分數標準化
+  // 2. 各池子獨立計算 Z-Score
   Object.keys(poolGroups).forEach(function(p) {
       var pStocks = poolGroups[p];
       if (!pStocks.length) return;
@@ -1060,7 +1058,6 @@ function calcAllScores(dateStr){
           return {s:s, raw:raw};
       });
 
-      // 在「池子內部」進行 Z-Score 計算，徹底終結大鍋炒
       var zMs=crossZ(rMs,99), zBs=crossZ(rBs,2), zSs=crossZ(rSs,99), zVs=crossZ(rVs,2), zKs=crossZ(rKs,99);
 
       infos.forEach(function(d,i) {
@@ -1626,6 +1623,7 @@ async function calcSignal() {
   SKIP_MO = !!($('btSkipMo') && $('btSkipMo').checked);
   CORR_WIN = parseInt($('corrW') ? $('corrW').value : '24') || 24;
   if (CACHE_SKIP_MO !== SKIP_MO) { await buildCache(); }
+  
   var stocks = getEnabledStocks().filter(function(s) { return RAW_SCORES[s.c]; });
   if (!stocks.length) { alert('No cached data'); return; }
   
@@ -1633,7 +1631,10 @@ async function calcSignal() {
   var hurdle = getHurdle(latestDate);
   var scores = calcAllScores(latestDate);
   var valid = scores.filter(function(r) { return r.score !== null; });
-var DEFENSIVE = ['TLT', 'GLD', 'SGOV'];
+
+  // 必須宣告防禦性資產，避免崩潰
+  var DEFENSIVE = ['TLT', 'GLD', 'SGOV'];
+
   // 取得各池子配額
   var qTW = parseInt($('btQuotaTW') ? $('btQuotaTW').value : '2') || 0;
   var qUS = parseInt($('btQuotaUS') ? $('btQuotaUS').value : '2') || 0;
@@ -1643,15 +1644,12 @@ var DEFENSIVE = ['TLT', 'GLD', 'SGOV'];
 
   // 建立三個獨立房間並分發
   var pools = { 'tw': [], 'us': [], 'etf': [] };
-    valid.forEach(function(r) {
+  valid.forEach(function(r) {
     var p = r.s.pool;
-    if (p === 'tw' || p === 'us' || p === 'etf') {
-      if (pools[p]) pools[p].push(r);
-    }
+    if (p === 'tw' || p === 'us' || p === 'etf') pools[p].push(r);
   });
 
-
-  // 各自獨立排序
+  // 各池子獨立排序
   pools['tw'].sort(function(a, b) { return b.score - a.score; });
   pools['us'].sort(function(a, b) { return b.score - a.score; });
   pools['etf'].sort(function(a, b) { return b.score - a.score; });
@@ -1660,25 +1658,26 @@ var DEFENSIVE = ['TLT', 'GLD', 'SGOV'];
   var ct = gv('corrT') || 0.75;
   var rejectedMap = {};
 
-  // 獨立抽卡邏輯 (完全同步回測)
+  // 獨立抽卡邏輯
   function pickFromPool(poolName) {
     var candidates = pools[poolName];
     var quota = quotas[poolName];
     var picked = 0;
     
     for (var j = 0; j < candidates.length; j++) {
-      if (picked >= quota) break;
       var cand = candidates[j];
       
-      // 檢查動能與均線門檻
       var passMom = cand.r240 !== null && cand.r240 > hurdle && DEFENSIVE.indexOf(cand.s.c) === -1;
       var ma60 = calcMA(DAILY[cand.s.c], latestDate, 60);
       var currentPrice = getPriceOnDate(DAILY[cand.s.c], latestDate);
       var passMA = ma60 && currentPrice && currentPrice >= ma60;
       
-      if (!passMom || !passMA) continue; // 不及格就不選
+      // 不及格就不選
+      if (!passMom || !passMA) continue; 
+      // 名額滿了就不選
+      if (picked >= quota) continue;
 
-      // 檢查相關性
+      // 相關性檢查
       var conflict = null;
       for (var x of sel) { 
         if (Math.abs(calcCorr(cand.s.c, x.s.c, latestDate)) >= ct) { conflict = x.s.c; break; } 
@@ -1697,11 +1696,10 @@ var DEFENSIVE = ['TLT', 'GLD', 'SGOV'];
   pickFromPool('tw');
   pickFromPool('etf');
 
-  // 防禦資產遞補
+  // 防禦資產遞補空缺
   var slots = totalQuota - sel.length;
   if (slots > 0) {
-    var sc2 = scores;
-    var defCands = sc2.filter(function(r) {
+    var defCands = scores.filter(function(r) {
       if (r.r240 === null) return false;
       if (r.s.c === 'SGOV') return r.r240 > 0;
       return (r.s.c === 'TLT' || r.s.c === 'GLD') && r.r240 > hurdle + 0.01;
@@ -1709,10 +1707,11 @@ var DEFENSIVE = ['TLT', 'GLD', 'SGOV'];
     for (var jd = 0; jd < defCands.length && slots > 0; jd++) { sel.push(defCands[jd]); slots--; }
   }
 
-  // 渲染 UI (傳遞最新日期與分池名單給列表)
+  // 渲染 UI
   renderSig(sel, valid.slice(-3).reverse(), valid, latestDate, hurdle);
   renderST(pools, hurdle, sel.map(s => s.s.c), rejectedMap, latestDate);
 }
+
 
 
 function renderSig(sel, wk, all, date, hurdle) {
@@ -1752,14 +1751,14 @@ function renderSig(sel, wk, all, date, hurdle) {
   if (!sel.length) html += '<div style="color:var(--ye);font-size:12px;margin-bottom:9px">無標的通過 TS 與季線門檻 - 全數持有現金</div>';
   $('sigContent').innerHTML = html;
 }
-
-
 function renderST(pools, hurdle, selectedCodes, rejectedMap, scoreM) {
   $('stCard').classList.remove('hidden');
   
   var zf = function(v) { return v !== null ? (v >= 0 ? '+' : '') + v.toFixed(2) : '-'; };
   var pf = function(v) { return v !== null ? (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%' : '-'; };
   
+  var DEFENSIVE = ['TLT', 'GLD', 'SGOV'];
+
   var poolOrder = ['us', 'tw', 'etf'];
   var poolNames = {'us': '🇺🇸 美股池排名', 'tw': '🇹🇼 台股池排名', 'etf': '🛡️ ETF池排名'};
   var poolColors = {'us': 'var(--us)', 'tw': 'var(--tw)', 'etf': 'var(--ac)'};
@@ -1769,11 +1768,9 @@ function renderST(pools, hurdle, selectedCodes, rejectedMap, scoreM) {
     var pAll = pools[p];
     if (!pAll || !pAll.length) return;
 
-    // 插入池子分隔標題
     html += `<tr><td colspan="12" style="background:var(--sf2); color:${poolColors[p]}; font-weight:700; text-align:center; padding:8px; border-bottom:2px solid ${poolColors[p]}">${poolNames[p]}</td></tr>`;
 
     pAll.forEach(function(r, i) {
-      // 判斷狀態
       var passMom = r.r240 !== null && r.r240 > hurdle && DEFENSIVE.indexOf(r.s.c) === -1;
       var ma60 = calcMA(DAILY[r.s.c], scoreM, 60);
       var currentPrice = getPriceOnDate(DAILY[r.s.c], scoreM);
@@ -1781,10 +1778,11 @@ function renderST(pools, hurdle, selectedCodes, rejectedMap, scoreM) {
       var isSelected = selectedCodes.includes(r.s.c);
       var conflictWith = rejectedMap[r.s.c];
 
+      // 明確寫出落榜原因！
       var statusHtml = '';
       if (isSelected) statusHtml = '<span style="color:var(--gr);font-weight:700">★ 已選入</span>';
-      else if (conflictWith) statusHtml = `<span style="color:var(--mu);font-size:10px">🚫 相關性 > ${conflictWith}</span>`;
-      else if (!passMom) statusHtml = '<span style="color:var(--re)">動能淘汰</span>';
+      else if (conflictWith) statusHtml = `<span style="color:var(--mu);font-size:10px">🚫 擋於 (${conflictWith})</span>`;
+      else if (!passMom) statusHtml = '<span style="color:var(--re)">動能/TS淘汰</span>';
       else if (!passMA) statusHtml = '<span style="color:var(--ye)">破季線淘汰</span>';
       else statusHtml = '<span style="color:var(--mu)">名額已滿</span>';
 
@@ -1805,8 +1803,11 @@ function renderST(pools, hurdle, selectedCodes, rejectedMap, scoreM) {
     });
   });
 
-  $('stBody').innerHTML = html;
+  $('stBody').innerHTML = html || '<tr><td colspan="12" style="text-align:center;color:var(--mu)">無符合條件的標的</td></tr>';
 }
+
+
+
 
 
 // 初始化
