@@ -763,16 +763,19 @@ async function fetchMonthly(tkOrS, range = 'max') {
   return Object.values(seen).sort((a, b) => a.date.localeCompare(b.date));
 }
 
-// 修正後的 fetchAll：抓取 max 全歷史，並抓取大盤日線做為時間軸
+// 在 fetchAll 中，我們直接抓取日線，並修復 Loading 文字進度
 async function fetchAll() {
   const stocks = getEnabledStocks();
   if(!stocks.length) return alert('請先選擇股池');
-  showL('抓取全歷史資料庫...'); $('fetchProg').classList.remove('hidden');
-  
+  showL('抓取全歷史資料庫...'); 
+  $('fetchProg').classList.remove('hidden');
+
   let success = 0;
   for (let i = 0; i < stocks.length; i++) {
+    // 修復 1：在 Loading 畫面同步顯示抓取進度與股票代號
+    $('loadTxt').textContent = '抓取中: ' + stocks[i].c + ' (' + (i+1) + '/' + stocks.length + ')'; 
     try {
-      DAILY[stocks[i].c] = await fetchOHLCV(stocks[i], '1d', 'max'); // 恢復 max
+      DAILY[stocks[i].c] = await fetchOHLCV(stocks[i], '1d', 'max');
       success++;
       $('fetchFill').style.width = `${((i+1)/stocks.length)*100}%`;
       updFetchStat();
@@ -780,11 +783,10 @@ async function fetchAll() {
     await new Promise(r => setTimeout(r, 600)); 
   }
   
-  // 抓基準 (使用專屬的 fetchMonthly 來避開時差)
+  // 修復 2：基準與利率也改用日線，徹底避開 Yahoo 月線 API 的時差 Bug
   try {
-    TNX_MONTHLY = await fetchMonthly({c:'^TNX', tw:false}, 'max');
-    BENCH_MONTHLY = await fetchMonthly({c:'^TWII', tw:true}, 'max');
-    // 【關鍵】額外抓取大盤日線，用來產生不斷尾的超長回測時間軸
+    $('loadTxt').textContent = '同步大盤基準與公債利率...';
+    DAILY['^TNX'] = await fetchOHLCV({c:'^TNX', tw:false}, '1d', 'max');
     DAILY['^TWII'] = await fetchOHLCV({c:'^TWII', tw:true}, '1d', 'max'); 
   } catch(e) { console.error("Bench Fetch Error", e); }
   
@@ -834,7 +836,15 @@ async function fetchUpdate() {
 }
 
 
-function updTNX(){if(!TNX_MONTHLY.length)return;var last=TNX_MONTHLY[TNX_MONTHLY.length-1];var sp=gv('btSpread')||0.5;var el=$('tnxVal');if(el)el.textContent=last.c.toFixed(2)+'% ('+last.date+')';var el2=$('tnxThresh');if(el2)el2.textContent='TS: '+(last.c+sp).toFixed(2)+'%';}
+function updTNX(){
+  var bars = DAILY['^TNX'];
+  if(!bars || !bars.length) return;
+  var last = bars[bars.length-1];
+  var sp = gv('btSpread')||0.5;
+  var el = $('tnxVal'); if(el) el.textContent = last.c.toFixed(2)+'% ('+last.date+')';
+  var el2 = $('tnxThresh'); if(el2) el2.textContent = 'TS: '+(last.c+sp).toFixed(2)+'%';
+}
+
 function updFetchStat(){
   var bar=$('fetchStat');if(!bar)return;var stocks=getEnabledStocks();
   bar.innerHTML=stocks.map(function(s){
@@ -855,6 +865,7 @@ function getPrevWorkDay(bars, dateStr, offset = 5) {
   if (!bars) return dateStr; let idx = bars.findIndex(b => b.date === dateStr);
   if (idx < offset) return bars[0].date; return bars[idx - offset].date;
 }
+
 function isBearishRegime(bars, dateStr, period = 60) {
   let ma = calcMA(bars, dateStr, period), price = getPriceOnDate(bars, dateStr);
   if (!ma || !price) return false;
@@ -869,6 +880,22 @@ function getPreciseRebalanceDates(bars, freq) {
     if (freq === "2" && !hasHalf && day >= 15) { if (dates[dates.length - 1] !== bar.date) { dates.push(bar.date); hasHalf = true; } }
   });
   return dates;
+}
+// 合併新舊 K 線資料並去重複、重新排序
+function mergeArr(oldBars, newBars) {
+  if (!oldBars || !oldBars.length) return newBars || [];
+  if (!newBars || !newBars.length) return oldBars || [];
+  
+  var seen = {};
+  // 先塞入舊資料
+  oldBars.forEach(function(b) { seen[b.date] = b; });
+  // 再塞入新資料（若日期重複，新資料會覆蓋舊資料，確保價格是最新的）
+  newBars.forEach(function(b) { seen[b.date] = b; });
+  
+  // 轉回陣列並依照日期由小到大排序
+  return Object.values(seen).sort(function(a, b) { 
+    return a.date.localeCompare(b.date); 
+  });
 }
 
 function calcVWMA(bars,n){if(bars.length<n)return null;var sl=bars.slice(-n),sp=0,sv=0;sl.forEach(function(b){sp+=b.c*b.v;sv+=b.v;});return sv>0?sp/sv:null;}
@@ -897,30 +924,53 @@ function rawMom(daily, idx) {
 
 async function buildCache() {
   const stocks = getEnabledStocks();
-  var withData = stocks.filter(function(s){return DAILY[s.c]&&DAILY[s.c].length>=240;});
+  // 不再限制 DAILY 長度需 >= 240，讓新股也能進入快取
+  var withData = stocks.filter(function(s){return DAILY[s.c] && DAILY[s.c].length > 0;});
   if(!withData.length){updCacheSt();return;}
-  showL('Building V2.0 Cache...');RAW_SCORES={};
+  showL('Building V2.0 Cache...'); RAW_SCORES={};
   var freq = $('btFreq') ? $('btFreq').value : "1";
+  
+  // 確立大盤絕對時間軸
+  var masterTicker = DAILY['^TWII'] ? '^TWII' : (DAILY['SPY'] ? 'SPY' : withData[0].c);
+  var globalRebalDates = getPreciseRebalanceDates(DAILY[masterTicker], freq);
+
   for(var si=0;si<withData.length;si++){
-    var s=withData[si];$('loadTxt').textContent='Cache: '+s.c+' ('+(si+1)+'/'+withData.length+')';
+    var s=withData[si];
+    $('loadTxt').textContent='Cache: '+s.c+' ('+(si+1)+'/'+withData.length+')';
     var bars=DAILY[s.c]; RAW_SCORES[s.c]={};
-    var rebalDates = getPreciseRebalanceDates(bars, freq);
-    rebalDates.forEach(function(d){
-      var mIdx = bars.findIndex(function(b){return b.date === d;});
-      if(mIdx>=240){
-        var cut = bars.slice(0, mIdx+1);
-        RAW_SCORES[s.c][d]={ rm:rawMom(bars,mIdx), rb:calcBias(cut,N_TREND), rs:calcSlope(cut,N_TREND), rv:calcVol(cut,N_TREND), rk:calcKbar(cut,N_TREND), r240: bars[mIdx].c/(bars[mIdx-240]?bars[mIdx-240].c:1)-1 };
+    
+    let bIdx = 0;
+    globalRebalDates.forEach(function(d){
+      // 找出該股票在基準日 d 之前（含 d）的最後一筆資料
+      while(bIdx < bars.length - 1 && bars[bIdx + 1].date <= d) { bIdx++; }
+      
+      // 只有當這檔股票自身累積滿 240 天，才開始產生分數
+      if(bars[bIdx].date <= d && bIdx >= 240){
+        var cut = bars.slice(0, bIdx+1);
+        RAW_SCORES[s.c][d]={ 
+          rm: rawMom(bars, bIdx), 
+          rb: calcBias(cut, N_TREND), 
+          rs: calcSlope(cut, N_TREND), 
+          rv: calcVol(cut, N_TREND), 
+          rk: calcKbar(cut, N_TREND), 
+          r240: bars[bIdx].c/(bars[bIdx-240]?bars[bIdx-240].c:1)-1 
+        };
       }
     });
-    if(si%5===4)await new Promise(function(r){setTimeout(r,0);});
+    if(si%5===4) await new Promise(function(r){setTimeout(r,0);});
   }
-  CACHE_BUILT=true;CACHE_TS=new Date().toISOString();CACHE_SKIP_MO=SKIP_MO;
-  hideL();updCacheSt();updTNX();
+  CACHE_BUILT=true; CACHE_TS=new Date().toISOString(); CACHE_SKIP_MO=SKIP_MO;
+  hideL(); updCacheSt(); updTNX();
 }
+
 function updCacheSt(){var el=$('cacheTxt');if(!el)return;if(!CACHE_BUILT){el.textContent='Cache: not built';el.style.color='var(--mu)';return;}var n=Object.keys(RAW_SCORES).length;var dt=new Date(CACHE_TS).toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit'});el.textContent='Cache OK ('+n+' stocks, '+dt+')';el.style.color='var(--gr)';}
 
 function crossZ(arr,cap){cap=cap||2;var vals=arr.filter(function(v){return v!==null&&!isNaN(v);});if(vals.length<3)return arr.map(function(v){return v===null?null:0;});var mean=vals.reduce(function(a,b){return a+b;},0)/vals.length;var std=Math.sqrt(vals.reduce(function(a,b){return a+(b-mean)*(b-mean);},0)/vals.length)||1;return arr.map(function(v){if(v===null)return null;return Math.max(-cap,Math.min(cap,(v-mean)/std));});}
-function getTNXRate(dateStr){if(!TNX_MONTHLY.length)return 0.04;var yyyymm=dateStr.slice(0,7);var best=null;TNX_MONTHLY.forEach(function(p){if(p.date<=yyyymm)best=p;});return best?(best.c/100):0.04;}
+function getTNXRate(dateStr) {
+   var rate = getPriceOnDate(DAILY['^TNX'], dateStr);
+   return rate ? (rate / 100) : 0.04;
+}
+
 function getHurdle(dateStr){return Math.max(0,getTNXRate(dateStr)+(gv('btSpread')||0.5)/100);}
 
 function calcAllScores(dateStr){
@@ -971,7 +1021,11 @@ function calcCorr(c1, c2, dateStr) {
   return num / Math.sqrt((d1 * d2) || 1);
 }
 
-function getBench(m){if(!BENCH_MONTHLY.length)return null;var ym=m.slice(0,7);var best=null;BENCH_MONTHLY.forEach(function(p){if(p.date<=ym)best=p;});return best?best.c:null;}
+function getBench(dateStr) {
+   var masterTicker = DAILY['^TWII'] ? '^TWII' : (DAILY['SPY'] ? 'SPY' : null);
+   return masterTicker ? getPriceOnDate(DAILY[masterTicker], dateStr) : null;
+}
+
 
 function runBTcore(mh, mode) {
   if (!CACHE_BUILT) return null;
