@@ -936,27 +936,39 @@ function rawMom(daily, idx) {
 
 async function buildCache() {
   const stocks = getEnabledStocks();
-  // 不再限制 DAILY 長度需 >= 240，讓新股也能進入快取
   var withData = stocks.filter(function(s){return DAILY[s.c] && DAILY[s.c].length > 0;});
   if(!withData.length){updCacheSt();return;}
-  showL('Building V2.0 Cache...'); RAW_SCORES={};
+  showL('Building V2.0 Cache (包含 T-1/T-2 日期)...'); 
+  RAW_SCORES={};
   var freq = $('btFreq') ? $('btFreq').value : "1";
   
-  // 確立大盤絕對時間軸
-  var masterTicker = DAILY['^TWII'] ? '^TWII' : (DAILY['SPY'] ? 'SPY' : withData[0].c);
-  var globalRebalDates = getPreciseRebalanceDates(DAILY[masterTicker], freq);
+  // 定義大盤基準
+  var masterTicker = DAILY['^TWII'] ? '^TWII' : (DAILY['0050'] ? '0050' : (DAILY['SPY'] ? 'SPY' : withData[0].c));
+  var refDaily = DAILY[masterTicker];
+  var globalRebalDates = getPreciseRebalanceDates(refDaily, freq);
+  
+  // 【核心修正】不只結算日，預先算出 T-1 與 T-2 的日期並加入快取清單
+  var neededDates = [];
+  globalRebalDates.forEach(function(d) {
+    neededDates.push(d); // T-0 (結算日)
+    neededDates.push(getPrevWorkDay(refDaily, d, 1)); // T-1 日期
+    neededDates.push(getPrevWorkDay(refDaily, d, 2)); // T-2 日期
+  });
+  // 去除重複日期並排序
+  var cacheDates = [...new Set(neededDates)].sort();
 
   for(var si=0;si<withData.length;si++){
     var s=withData[si];
     $('loadTxt').textContent='Cache: '+s.c+' ('+(si+1)+'/'+withData.length+')';
-    var bars=DAILY[s.c]; RAW_SCORES[s.c]={};
+    var bars=DAILY[s.c]; 
+    RAW_SCORES[s.c]={};
     
     let bIdx = 0;
-    globalRebalDates.forEach(function(d){
-      // 找出該股票在基準日 d 之前（含 d）的最後一筆資料
+    cacheDates.forEach(function(d){
+      // 尋找對應日期的 K 棒索引
       while(bIdx < bars.length - 1 && bars[bIdx + 1].date <= d) { bIdx++; }
       
-      // 只有當這檔股票自身累積滿 240 天，才開始產生分數
+      // 確保股票上市滿 240 天，才產生分數存入
       if(bars[bIdx].date <= d && bIdx >= 240){
         var cut = bars.slice(0, bIdx+1);
         RAW_SCORES[s.c][d]={ 
@@ -969,6 +981,7 @@ async function buildCache() {
         };
       }
     });
+    // 釋放記憶體避免瀏覽器卡死
     if(si%5===4) await new Promise(function(r){setTimeout(r,0);});
   }
   CACHE_BUILT=true; CACHE_TS=new Date().toISOString(); CACHE_SKIP_MO=SKIP_MO;
