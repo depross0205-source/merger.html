@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+lol<!DOCTYPE html>
 
 <html lang="zh-TW">
 <head>
@@ -869,11 +869,22 @@ function updFetchStat(){
 }
 
 function calcMA(bars, dateStr, period) {
-  if (!bars) return null; let idx = bars.findIndex(b => b.date === dateStr);
-  if (idx < period - 1) return null; let sum = 0;
+  if (!bars || !bars.length) return null;
+  
+  // 尋找「小於等於」該日期的最新一筆 K 棒索引，完美解決台美股交易日差
+  let idx = -1;
+  for (let i = 0; i < bars.length; i++) {
+    if (bars[i].date <= dateStr) idx = i;
+    else break;
+  }
+  
+  if (idx < period - 1) return null; // 上市天數不足不計算
+  
+  let sum = 0;
   for (let i = idx - period + 1; i <= idx; i++) sum += bars[i].c;
   return sum / period;
 }
+
 function getPriceOnDate(bars, dateStr) { 
   if (!bars || !bars.length || dateStr < bars[0].date) return null; 
   let best = bars[0].c;
