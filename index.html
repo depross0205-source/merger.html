@@ -869,23 +869,35 @@ function updFetchStat(){
     return '<span class="bdg" style="background:'+bg+';color:'+col+';border:1px solid '+bd+'">'+s.c+'</span>';
   }).join('');
 }
-
 function calcMA(bars, dateStr, period) {
   if (!bars || !bars.length) return null;
   
-  // 尋找「小於等於」該日期的最新一筆 K 棒索引，完美解決台美股交易日差
+  // 1. 尋找「小於等於」該日期的最新一筆 K 棒索引 (解決台美股時差)
   let idx = -1;
   for (let i = 0; i < bars.length; i++) {
     if (bars[i].date <= dateStr) idx = i;
     else break;
   }
   
-  if (idx < period - 1) return null; // 上市天數不足不計算
+  if (idx < period - 1) return null; 
   
-  let sum = 0;
-  for (let i = idx - period + 1; i <= idx; i++) sum += bars[i].c;
-  return sum / period;
+  // 2. 計算 VWMA (成交量加權移動平均)
+  let sumPriceVol = 0;
+  let sumVol = 0;
+  
+  for (let i = idx - period + 1; i <= idx; i++) {
+    // 🛡️ 機構級防呆：大盤指數或缺漏資料的 Volume 可能是 0 或 null
+    // 遇到無量時，強制給予權重 1 (也就是自動降級成傳統 SMA，防止除以 0 崩潰)
+    let vol = (bars[i].v && bars[i].v > 0) ? bars[i].v : 1; 
+    
+    sumPriceVol += bars[i].c * vol;
+    sumVol += vol;
+  }
+  
+  return sumVol > 0 ? (sumPriceVol / sumVol) : null;
 }
+
+
 
 function getPriceOnDate(bars, dateStr) { 
   if (!bars || !bars.length || dateStr < bars[0].date) return null; 
@@ -1307,43 +1319,86 @@ function runBTcore(mh, mode) {
       }
     }
 
-    var totalW = 0; Object.keys(newH).forEach(function(c) { totalW += newH[c]; });
-    var cashW = 1.0 - totalW;
-    if (cashW > 0.001) newH['CASH'] = cashW;
-
-    var allC = Object.keys(holdings).concat(Object.keys(newH)), seen2 = {};
-    allC.forEach(function(c) { seen2[c] = true; });
-    var tv = 0; Object.keys(seen2).forEach(function(c) { tv += Math.abs((newH[c] || 0) - (holdings[c] || 0)); });
-
-    var cr = getTNXRate(scoreM);
-    var pRet = 0, stockRets = {}, pureRet = 0;
-    var cashDivisor = (freq === "2") ? 24 : 12;
-
-    Object.keys(newH).forEach(function(c) {
-      var wt = newH[c];
-      if (c === 'CASH') {
-        var r_c = cr / cashDivisor; pRet += wt * r_c; pureRet += wt * r_c;
-        stockRets.CASH = { ret: r_c, w: wt }; return;
+        // 💡 1. 決定目標權重 (Target) 與空倉防護
+    var target = {};
+    var deployedW = 0;
+    if (sel.length > 0) {
+      if (mode === 'rank') {
+        var ldenom = sel.length * (sel.length + 1) / 2;
+        sel.forEach(function(r, i) {
+          var tw = ((sel.length - i) / ldenom) * exposure;
+          target[r.s.c] = tw;
+          deployedW += tw;
+        });
+      } else {
+        var tw = (1 / sel.length) * exposure;
+        sel.forEach(function(r) {
+          target[r.s.c] = tw;
+          deployedW += tw;
+        });
       }
-      
-      // 【核心修正：區塊三】統一改用 getPriceOnDate 在日線中精準取價
-      var p0 = getPriceOnDate(DAILY[c], prevM), p1 = getPriceOnDate(DAILY[c], sigM);
-      if (p0 && p1 && p0 > 0) {
-        var r_s = p1 / p0 - 1; pRet += wt * r_s; pureRet += wt * r_s;
-        stockRets[c] = { ret: r_s, w: wt };
-      } else { stockRets[c] = { ret: 0, w: wt }; }
+    }
+    if (deployedW < 1.0) target['CASH'] = 1.0 - deployedW;
+
+    // 💡 2. 蒐集本期所有需要報價的標的
+    var allTickers = new Set([...Object.keys(holdings), ...Object.keys(target)]);
+    var cashRet = 0;
+    if (DAILY['SGOV'] && getPriceOnDate(DAILY['SGOV'], prevM) && getPriceOnDate(DAILY['SGOV'], sigM)) {
+      var s0 = getPriceOnDate(DAILY['SGOV'], prevM), s1 = getPriceOnDate(DAILY['SGOV'], sigM);
+      cashRet = s1 / s0 - 1;
+    } else {
+      var cr = getTNXRate(scoreM), cashDivisor = (freq === "2") ? 24 : 12;
+      var CASH_FACTOR = 0.7; // 保守折算
+      cashRet = (cr * CASH_FACTOR) / cashDivisor; 
+    }
+
+    var stockRets = {};
+    allTickers.forEach(function(c) {
+      if (c === 'CASH') { stockRets[c] = { ret: cashRet }; } 
+      else {
+        var p0 = getPriceOnDate(DAILY[c], prevM), p1 = getPriceOnDate(DAILY[c], sigM);
+        stockRets[c] = { ret: (p0 && p1 && p0 > 0) ? (p1 / p0 - 1) : null };
+      }
     });
-    
-    pRet -= (tv / 2) * COST; nav *= (1 + pRet);
 
-    var driftedH = {};
-    Object.keys(newH).forEach(function(c) { driftedH[c] = newH[c] * (1 + (stockRets[c] ? stockRets[c].ret : 0)) / (1 + pureRet); });
+    // 💡 3. 結算期初持倉的真實報酬 (防呆機制：缺資料強制轉現金)
+    var pRet = 0, validHoldings = {}, forcedCash = 0;
+    for (var c in holdings) {
+      var w = holdings[c], rData = stockRets[c];
+      if (rData.ret === null) { forcedCash += w; } 
+      else { pRet += w * rData.ret; validHoldings[c] = w; }
+    }
+    if (forcedCash > 0) validHoldings['CASH'] = (validHoldings['CASH'] || 0) + forcedCash;
 
+    // 🛡️ 機構級防呆：防止極端黑天鵝導致分母歸零
+    if (!isFinite(pRet) || pRet <= -0.9999) pRet = -0.9999; 
+
+    // 💡 4. 計算期末自然漂移權重 (Drift)
+    var drifted = {};
+    for (var c in validHoldings) {
+      drifted[c] = (validHoldings[c] * (1 + (stockRets[c]?.ret || 0))) / (1 + pRet);
+    }
+
+    // 💡 5. 計算換手率與真實摩擦成本 (Cost + Impact)
+    var turnover = 0;
+    allTickers.forEach(function(c) { turnover += Math.abs((target[c] || 0) - (drifted[c] || 0)); });
+    turnover /= 2;
+
+    var baseSlippage = 0.001; 
+    var impactMultiplier = Math.max(1, Math.pow(turnover / 0.2, 1.5)); 
+    var impactCost = baseSlippage * impactMultiplier;
+    var friction = (turnover * COST) + impactCost; // 獨立疊加，避免雙重懲罰
+
+    pRet -= friction; 
+    nav *= (1 + pRet);
+
+    // 💡 6. 結算大盤與紀錄保存
     var b0 = getPriceOnDate(refDaily, prevM), b1 = getPriceOnDate(refDaily, sigM);
     if (b0 && b1 && b0 > 0) bNav *= (1 + (b1 / b0 - 1));
 
-    var hCopy = {}; Object.keys(newH).forEach(function(k) { hCopy[k] = newH[k]; });
+    var hCopy = {}; Object.keys(target).forEach(k => hCopy[k] = target[k]);
     var periodStr = prevM + " ~ " + sigM;
+
     records.push({ month: sigM, period: periodStr, nav: nav, bNav: bNav, holdings: hCopy, pRet: pRet, hurdle: hurdle, stockRets: stockRets });
     holdings = driftedH;
   }
