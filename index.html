@@ -1608,7 +1608,7 @@ async function calcSignal() {
   var hurdle = getHurdle(latestDate);
   var scores = calcAllScores(latestDate);
   var valid = scores.filter(function(r) { return r.score !== null; });
-var DEFENSIVE = ['TLT', 'GLD', 'SGOV'];，
+var DEFENSIVE = ['TLT', 'GLD', 'SGOV'];
   // 取得各池子配額
   var qTW = parseInt($('btQuotaTW') ? $('btQuotaTW').value : '2') || 0;
   var qUS = parseInt($('btQuotaUS') ? $('btQuotaUS').value : '2') || 0;
