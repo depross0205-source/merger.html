@@ -463,10 +463,12 @@ tr:hover{background:var(--sf2)}
       <div class="fi"><label>Slope(%)</label><input type="number" id="wSlope" value="15" min="0" max="100"></div>
       <div class="fi"><label>&#x91CF;&#x80FD;(%)</label><input type="number" id="wVol" value="10" min="0" max="100"></div>
       <div class="fi"><label>K&#x68D2;(%)</label><input type="number" id="wKbar" value="10" min="0" max="100"></div>
-      <div class="fi"><label>Corr Thresh</label><input type="number" id="corrT" value="0.75" step="0.05" min="0.3" max="1"></div>
+            <div class="fi"><label>Corr Thresh</label><input type="number" id="corrT" value="0.75" step="0.05" min="0.3" max="1"></div>
       <div class="fi"><label>Corr Window (mo)</label><input type="number" id="corrW" value="24" min="6" max="60" step="6"></div>
+      <div class="fi"><label>>60MA 絕對門檻</label><select id="ma60Filter"><option value="on" selected>On (破線淘汰)</option><option value="off">Off (僅依評分)</option></select></div>
     </div>
     <div class="ib2">
+
       <b>&#x52D5;&#x80FD;</b>: 0.5z12+0.3z6+0.2z3 (&#x6708;&#x983B;) |
       <b>&#x53F0;</b>: &#x9031;&#x983B; 13&#x9031; | <b>US/Mag7</b>: &#x65E5;&#x983B; 50&#x65E5;<br>
       <b>TS</b>: R12 &gt; ^TNX + spread%
@@ -1195,16 +1197,23 @@ function runBTcore(mh, mode) {
 
     // --- 2. 分池過濾與「各自排序」 ---
     // 建立三個獨立的候選房間
+        // --- 2. 分池過濾與「各自排序」 ---
+    // 建立三個獨立的候選房間
     var pools = { 'tw': [], 'us': [], 'etf': [] };
+    var useMA60 = $('ma60Filter') ? $('ma60Filter').value === 'on' : true;
 
-          valid.forEach(function(r) {
+    valid.forEach(function(r) {
       var passMom = r.r240 !== null && r.r240 > hurdle && DEFENSIVE.indexOf(r.s.c) === -1;
       if (!passMom) return;
+      
       var ma60 = calcMA(DAILY[r.s.c], scoreM, 60);
       var currentPrice = getPriceOnDate(DAILY[r.s.c], scoreM);
-      if (!ma60 || !currentPrice || currentPrice < ma60) return;
+      var isAboveMA = ma60 && currentPrice && currentPrice >= ma60;
+      var passMA = useMA60 ? isAboveMA : true;
+      if (!passMA) return;
       
       var p = r.s.pool; 
+
       // 只允許三大池的股票進入排序房間，排除 other (如中日股)
       if (p === 'tw' || p === 'us' || p === 'etf') {
         if (pools[p]) pools[p].push(r);
@@ -1659,7 +1668,8 @@ async function calcSignal() {
 
   var sel = [];
   var ct = gv('corrT') || 0.75;
-  var rejectedMap = {};
+    var rejectedMap = {};
+  var useMA60 = $('ma60Filter') ? $('ma60Filter').value === 'on' : true;
 
   // 獨立抽卡邏輯
   function pickFromPool(poolName) {
@@ -1673,10 +1683,13 @@ async function calcSignal() {
       var passMom = cand.r240 !== null && cand.r240 > hurdle && DEFENSIVE.indexOf(cand.s.c) === -1;
       var ma60 = calcMA(DAILY[cand.s.c], latestDate, 60);
       var currentPrice = getPriceOnDate(DAILY[cand.s.c], latestDate);
-      var passMA = ma60 && currentPrice && currentPrice >= ma60;
+      
+      var isAboveMA = ma60 && currentPrice && currentPrice >= ma60;
+      var passMA = useMA60 ? isAboveMA : true;
       
       // 不及格就不選
       if (!passMom || !passMA) continue; 
+
       // 名額滿了就不選
       if (picked >= quota) continue;
 
@@ -1773,11 +1786,14 @@ function renderST(pools, hurdle, selectedCodes, rejectedMap, scoreM) {
 
     html += `<tr><td colspan="12" style="background:var(--sf2); color:${poolColors[p]}; font-weight:700; text-align:center; padding:8px; border-bottom:2px solid ${poolColors[p]}">${poolNames[p]}</td></tr>`;
 
+        var useMA60 = $('ma60Filter') ? $('ma60Filter').value === 'on' : true;
+
     pAll.forEach(function(r, i) {
       var passMom = r.r240 !== null && r.r240 > hurdle && DEFENSIVE.indexOf(r.s.c) === -1;
       var ma60 = calcMA(DAILY[r.s.c], scoreM, 60);
       var currentPrice = getPriceOnDate(DAILY[r.s.c], scoreM);
-      var passMA = ma60 && currentPrice && currentPrice >= ma60;
+      var isAboveMA = ma60 && currentPrice && currentPrice >= ma60;
+      var passMA = useMA60 ? isAboveMA : true;
       var isSelected = selectedCodes.includes(r.s.c);
       var conflictWith = rejectedMap[r.s.c];
 
@@ -1786,8 +1802,10 @@ function renderST(pools, hurdle, selectedCodes, rejectedMap, scoreM) {
       if (isSelected) statusHtml = '<span style="color:var(--gr);font-weight:700">★ 已選入</span>';
       else if (conflictWith) statusHtml = `<span style="color:var(--mu);font-size:10px">🚫 擋於 (${conflictWith})</span>`;
       else if (!passMom) statusHtml = '<span style="color:var(--re)">動能/TS淘汰</span>';
-      else if (!passMA) statusHtml = '<span style="color:var(--ye)">破季線淘汰</span>';
+      else if (!isAboveMA && useMA60) statusHtml = '<span style="color:var(--ye)">破季線淘汰</span>';
       else statusHtml = '<span style="color:var(--mu)">名額已滿</span>';
+
+      var maDisplay = isAboveMA ? '<span style="color:var(--gr)">Y</span>' : (useMA60 ? '<span style="color:var(--re)">N</span>' : '<span style="color:var(--ye)">N(赦免)</span>');
 
       html += `<tr>
         <td class="mono" style="color:var(--mu)">${i + 1}</td>
@@ -1801,8 +1819,9 @@ function renderST(pools, hurdle, selectedCodes, rejectedMap, scoreM) {
         <td class="mono">${zf(r.zv)}</td>
         <td class="mono">${zf(r.zk)}</td>
         <td class="mono">${pf(r.r240)}</td>
-        <td>${passMA ? '<span style="color:var(--gr)">Y</span>' : '<span style="color:var(--re)">N</span>'}</td>
+        <td>${maDisplay}</td>
       </tr>`;
+
     });
   });
 
