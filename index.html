@@ -1135,7 +1135,7 @@ function calcAllScores(dateStr) {
   var wM=gv('wMom')/100, wB=gv('wBias')/100, wS=gv('wSlope')/100, wV=gv('wVol')/100, wK=gv('wKbar')/100;
 
   if (mode === 'large') {
-    // --- 大池模式：不分區域，全體標準化 ---
+    // --- 大池模式：全局統一計算 ---
     var rMs=[], rBs=[], rSs=[], rVs=[], rKs=[];
     var infos = stocks.map(s => {
       var raw = RAW_SCORES[s.c][dateStr];
@@ -1145,20 +1145,33 @@ function calcAllScores(dateStr) {
     var zMs=crossZ(rMs,99), zBs=crossZ(rBs,2), zSs=crossZ(rSs,99), zVs=crossZ(rVs,2), zKs=crossZ(rKs,99);
     return infos.map((d, i) => ({
       s: d.s, score: (wM*zMs[i] + wB*zBs[i] + wS*zSs[i] + wV*zVs[i] + wK*zKs[i]),
-      zm: zMs[i], r240: d.raw.r240
+      zm: zMs[i], zb: zBs[i], zs: zSs[i], zv: zVs[i], zk: zKs[i], r240: d.raw.r240
     }));
   } else {
-    // --- 小池模式：保留你原本程式中 poolGroups 的那段程式碼 ---
+    // --- 小池模式：分市場獨立計算 (補齊此處邏輯) ---
     var poolGroups = { 'tw': [], 'us': [], 'etf': [], 'other': [] };
-    stocks.forEach(s => poolGroups[s.pool || 'other'].push(s));
+    stocks.forEach(s => { if(poolGroups[s.pool]) poolGroups[s.pool].push(s); });
     var finalScores = [];
     Object.keys(poolGroups).forEach(p => {
-        var pStocks = poolGroups[p]; if (!pStocks.length) return;
-        // ... (此處維持你原本的分池 crossZ 計算邏輯)
+      var pStocks = poolGroups[p]; if (!pStocks.length) return;
+      var rMs=[], rBs=[], rSs=[], rVs=[], rKs=[];
+      var infos = pStocks.map(s => {
+        var raw=RAW_SCORES[s.c][dateStr];
+        rMs.push(raw.rm); rBs.push(raw.rb); rSs.push(raw.rs); rVs.push(raw.rv); rKs.push(raw.rk);
+        return {s:s, raw:raw};
+      });
+      var zMs=crossZ(rMs,99), zBs=crossZ(rBs,2), zSs=crossZ(rSs,99), zVs=crossZ(rVs,2), zKs=crossZ(rKs,99);
+      infos.forEach((d,i) => {
+        finalScores.push({
+          s:d.s, score: (wM*zMs[i]+wB*zBs[i]+wS*zSs[i]+wV*zVs[i]+wK*zKs[i]),
+          zm:zMs[i], zb:zBs[i], zs:zSs[i], zv:zVs[i], zk:zKs[i], r240:d.raw.r240
+        });
+      });
     });
     return finalScores;
   }
 }
+
   
 
 function calcCorr(c1, c2, dateStr) {
@@ -1932,66 +1945,45 @@ function renderSig(sel, wk, all, date, hurdle) {
   if (!sel.length) html += '<div style="color:var(--ye);font-size:12px;margin-bottom:9px">無標的通過 TS 與季線門檻 - 全數持有現金</div>';
   $('sigContent').innerHTML = html;
 }
-function renderST(pools, hurdle, selectedCodes, rejectedMap, scoreM) {
+function renderST(all, hurdle, selectedCodes, rejectedMap, scoreM) {
   $('stCard').classList.remove('hidden');
+  var zf = v => (v !== null ? (v >= 0 ? '+' : '') + v.toFixed(2) : '-');
+  var pf = v => (v !== null ? (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%' : '-');
   
-  var zf = function(v) { return v !== null ? (v >= 0 ? '+' : '') + v.toFixed(2) : '-'; };
-  var pf = function(v) { return v !== null ? (v >= 0 ? '+' : '') + (v * 100).toFixed(1) + '%' : '-'; };
-  
-  var DEFENSIVE = ['TLT', 'GLD', 'SGOV'];
+  // 按分數從高到低排序，讓你知道最強的是誰
+  var sorted = all.sort((a,b) => b.score - a.score);
 
-  var poolOrder = ['us', 'tw', 'etf'];
-  var poolNames = {'us': '🇺🇸 美股池排名', 'tw': '🇹🇼 台股池排名', 'etf': '🛡️ ETF池排名'};
-  var poolColors = {'us': 'var(--us)', 'tw': 'var(--tw)', 'etf': 'var(--ac)'};
-  var html = '';
+  $('stBody').innerHTML = sorted.map((r, i) => {
+    var passTS = r.r240 !== null && r.r240 > hurdle;
+    var maOk = isStrictTechnicalPass(r.s.c, scoreM);
+    var isSelected = selectedCodes.includes(r.s.c);
+    var conflict = rejectedMap[r.s.c];
 
-  poolOrder.forEach(function(p) {
-    var pAll = pools[p];
-    if (!pAll || !pAll.length) return;
+    // 狀態判定
+    var status = "";
+    if (isSelected) status = '<span style="color:var(--gr);font-weight:700">★ 入選</span>';
+    else if (conflict) status = `<span style="color:var(--mu);font-size:10px">🚫 相關性(${conflict})</span>`;
+    else if (!passTS) status = '<span style="color:var(--re)">TS 淘汰(回報不足)</span>';
+    else if (document.getElementById('ma60Filter').value==='on' && !maOk) status = '<span style="color:var(--ye)">季線淘汰</span>';
+    else status = '<span style="color:var(--mu)">名額已滿</span>';
 
-    html += `<tr><td colspan="12" style="background:var(--sf2); color:${poolColors[p]}; font-weight:700; text-align:center; padding:8px; border-bottom:2px solid ${poolColors[p]}">${poolNames[p]}</td></tr>`;
-
-        var useMA60 = $('ma60Filter') ? $('ma60Filter').value === 'on' : true;
-
-    pAll.forEach(function(r, i) {
-      var passMom = r.r240 !== null && r.r240 > hurdle && DEFENSIVE.indexOf(r.s.c) === -1;
-      var ma60 = calcMA(DAILY[r.s.c], scoreM, 60);
-      var currentPrice = getPriceOnDate(DAILY[r.s.c], scoreM);
-      var isAboveMA = ma60 && currentPrice && currentPrice >= ma60;
-      var passMA = useMA60 ? isAboveMA : true;
-      var isSelected = selectedCodes.includes(r.s.c);
-      var conflictWith = rejectedMap[r.s.c];
-
-      // 明確寫出落榜原因！
-      var statusHtml = '';
-      if (isSelected) statusHtml = '<span style="color:var(--gr);font-weight:700">★ 已選入</span>';
-      else if (conflictWith) statusHtml = `<span style="color:var(--mu);font-size:10px">🚫 擋於 (${conflictWith})</span>`;
-      else if (!passMom) statusHtml = '<span style="color:var(--re)">動能/TS淘汰</span>';
-      else if (!isAboveMA && useMA60) statusHtml = '<span style="color:var(--ye)">破季線淘汰</span>';
-      else statusHtml = '<span style="color:var(--mu)">名額已滿</span>';
-
-      var maDisplay = isAboveMA ? '<span style="color:var(--gr)">Y</span>' : (useMA60 ? '<span style="color:var(--re)">N</span>' : '<span style="color:var(--ye)">N(赦免)</span>');
-
-      html += `<tr>
-        <td class="mono" style="color:var(--mu)">${i + 1}</td>
-        <td class="mono" style="font-weight:700;color:${poolColors[p]}">${r.s.c}</td>
-        <td>${r.s.n}</td>
-        <td style="font-size:11px">${statusHtml}</td>
-        <td class="mono" style="font-weight:700;color:${r.score >= 0 ? 'var(--gr)' : 'var(--re)'}">${zf(r.score)}</td>
-        <td class="mono">${zf(r.zm)}</td>
-        <td class="mono">${zf(r.zb)}</td>
-        <td class="mono">${zf(r.zs)}</td>
-        <td class="mono">${zf(r.zv)}</td>
-        <td class="mono">${zf(r.zk)}</td>
-        <td class="mono">${pf(r.r240)}</td>
-        <td>${maDisplay}</td>
-      </tr>`;
-
-    });
-  });
-
-  $('stBody').innerHTML = html || '<tr><td colspan="12" style="text-align:center;color:var(--mu)">無符合條件的標的</td></tr>';
+    return `<tr>
+      <td class="mono">${i+1}</td>
+      <td class="mono" style="color:${r.s.tw?'var(--tw)':'var(--us)'}">${r.s.c}</td>
+      <td>${r.s.n}</td>
+      <td style="font-size:11px">${status}</td>
+      <td class="mono" style="font-weight:700">${zf(r.score)}</td>
+      <td class="mono">${zf(r.zm)}</td>
+      <td class="mono">${zf(r.zb)}</td>
+      <td class="mono">${zf(r.zs)}</td>
+      <td class="mono">${zf(r.zv)}</td>
+      <td class="mono">${zf(r.zk)}</td>
+      <td class="mono" style="color:${passTS?'var(--gr)':'var(--re)'}">${pf(r.r240)}</td>
+      <td>${maOk?'<span style="color:var(--gr)">Y</span>':'<span style="color:var(--re)">N</span>'}</td>
+    </tr>`;
+  }).join('');
 }
+
 
 
 
