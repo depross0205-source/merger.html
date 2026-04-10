@@ -1249,6 +1249,9 @@ function runBTcore(mh, mode) {
   var INIT = gv('btCap') || 100000, COST = (gv('btC') || 0.3) / 100, ct = gv('corrT') || 0.75;
   var shortN = parseInt($('btSN') ? $('btSN').value : '0') || 0;
   var capMode = document.querySelector('input[name="capMode"]:checked') ? document.querySelector('input[name="capMode"]:checked').value : 'neutral';
+  var wtModeEl = document.querySelector('input[name="wtMode"]:checked');
+var wtMode = wtModeEl ? wtModeEl.value : 'equal';
+
   var shortTSF = !!($('btSTSF') && $('btSTSF').checked);
   
   var indExitOn = $('btIndExit') && $('btIndExit').value === 'on';
@@ -1265,7 +1268,10 @@ function runBTcore(mh, mode) {
     var scoreM = getPrevWorkDay(refDaily, prevM, LAG);
 
     var hurdle = getHurdle(scoreM);
-    var sc2 = calcAllScores(scoreM);
+    var skipMoOn = !!($('btSkipMo') && $('btSkipMo').checked);
+var scoringM = skipMoOn ? getPrevWorkDay(refDaily, scoreM, 22) : scoreM;
+var sc2 = calcAllScores(scoringM);
+
     var valid = sc2.filter(function(r) { return r.score !== null; });
     valid.sort(function(a, b) { return b.score - a.score; });
 
@@ -1408,7 +1414,8 @@ function runBTcore(mh, mode) {
       var lScale = is1330 ? 1.0 : 0.5, sScale = is1330 ? 0.3 : 0.5;
       
       // 配置多頭 (Long)
-      if (mode === 'rank') {
+     if (wtMode === 'rank') {
+
         var ldenom = sel.length * (sel.length + 1) / 2;
         sel.forEach(function(r, i) { target[r.s.c] = lScale * ((sel.length - i) / ldenom) * exposure; });
       } else {
@@ -1418,7 +1425,7 @@ function runBTcore(mh, mode) {
       
       // 配置空頭 (Short)
       if (selS.length > 0) {
-        var sdenom = mode === 'rank' ? selS.length * (selS.length + 1) / 2 : selS.length;
+        var sdenom = wtMode === 'rank' ? selS.length * (selS.length + 1) / 2 : selS.length;
         selS.forEach(function(r, i) { target[r.s.c] = -sScale * (mode === 'rank' ? ((selS.length - i) / sdenom) : 1 / sdenom) * exposure; });
       }
     }
@@ -1544,15 +1551,22 @@ function runCompare() {
   SKIP_MO = !!($('btSkipMo') && $('btSkipMo').checked);
   CORR_WIN = parseInt($('corrW') ? $('corrW').value : '24') || 24;
   var maxN = parseInt($('btH') ? $('btH').value : '5') || 5, mode = getWeightMode();
+  var elMode = document.getElementById('poolMode');
+var origMode = elMode ? elMode.value : 'large';
+if (elMode) elMode.value = 'large';
+
   sl('btLog', 'Comparing N=1 to ' + maxN + '...', null); showL('Comparing...');
   setTimeout(async function() {
     try {
       if (CACHE_SKIP_MO !== SKIP_MO) { await buildCache(); }
       var init = gv('btCap') || 100000, results = [];
       for (var n = 1; n <= maxN; n++) {
-        var recs = runBTcore(n, mode);
+        if ($('btH')) $('btH').value = n;
+var recs = runBTcore(n, mode);
+
         if (recs) results.push({ n: n, recs: recs, k: kpi(recs, init) });
       }
+      if (elMode) elMode.value = origMode;
       if (!results.length) { alert('No results'); hideL(); return; }
             renderCompare(results, init, mode);
       var dStart = results[0].recs[0].month;
@@ -1888,6 +1902,71 @@ window.onload = async function() {
   var hasData = await loadFromDB();
   if (!hasData) console.log('No local data found in IndexedDB.');
 };
+  function runMultiCount() {
+  if (!CACHE_BUILT) { alert('Build cache first'); return; }
+  var el = $('btH');
+  if (!el) { alert('btH not found'); return; }
+  var orig = el.value;
+  var counts = [3, 5, 7, 10];
+  var rows = [];
+
+  counts.forEach(function(n) {
+    el.value = n;
+    var recs = runBTcore(n, 'large');
+    if (!recs || recs.length < 6) { rows.push({ n: n, err: true }); return; }
+
+    var initNav = recs[0].nav / (1 + recs[0].pRet);
+    var finalNav = recs[recs.length - 1].nav;
+    var years = recs.length / 12;
+    var cagr = Math.pow(finalNav / initNav, 1 / years) - 1;
+
+    var peak = initNav, mdd = 0;
+    recs.forEach(function(r) {
+      if (r.nav > peak) peak = r.nav;
+      var dd = (r.nav - peak) / peak;
+      if (dd < mdd) mdd = dd;
+    });
+
+    var rets = recs.map(function(r) { return r.pRet; });
+    var mean = rets.reduce(function(a, b) { return a + b; }, 0) / rets.length;
+    var variance = rets.reduce(function(a, b) {
+      return a + Math.pow(b - mean, 2);
+    }, 0) / rets.length;
+    var sharpe = variance > 0 ? (mean / Math.sqrt(variance)) * Math.sqrt(12) : 0;
+
+    rows.push({ n: n, cagr: cagr, mdd: mdd, sharpe: sharpe });
+  });
+
+  el.value = orig;
+
+  var html = '<table style="border-collapse:collapse;width:100%;font-size:0.9em;text-align:center;">';
+  html += '<tr style="background:#e8f0fe;">'
+    + '<th style="padding:6px 12px;">N</th>'
+    + '<th style="padding:6px 12px;">CAGR</th>'
+    + '<th style="padding:6px 12px;">MDD</th>'
+    + '<th style="padding:6px 12px;">Sharpe</th>'
+    + '</tr>';
+
+  rows.forEach(function(r, i) {
+    var bg = i % 2 === 0 ? '#fff' : '#f8f9fa';
+    if (r.err) {
+      html += '<tr style="background:' + bg + '"><td>' + r.n + '</td><td colspan="3">--</td></tr>';
+    } else {
+      var mddColor = r.mdd < -0.3 ? '#c0392b' : '#555';
+      html += '<tr style="background:' + bg + '">'
+        + '<td style="padding:5px 12px;font-weight:bold;">' + r.n + '</td>'
+        + '<td style="padding:5px 12px;">' + (r.cagr * 100).toFixed(2) + '%</td>'
+        + '<td style="padding:5px 12px;color:' + mddColor + ';">' + (r.mdd * 100).toFixed(2) + '%</td>'
+        + '<td style="padding:5px 12px;">' + r.sharpe.toFixed(2) + '</td>'
+        + '</tr>';
+    }
+  });
+  html += '</table>';
+
+  var out = $('btResult') || $('result') || $('btOut');
+  if (out) out.innerHTML = html;
+}
+
 </script>
 
 
