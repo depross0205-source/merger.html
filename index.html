@@ -108,6 +108,9 @@ tr:hover{background:var(--sf2)}
   <button class="tab" onclick="switchTab('fetch',this)">&#x1F310; &#x6293;&#x53D6;</button>
   <button class="tab" onclick="switchTab('signal',this)">&#x1F4E1; &#x4FE1;&#x865F;</button>
   <button class="tab" onclick="switchTab('backtest',this)">&#x1F4C8; &#x56DE;&#x6E2C;</button>
+<button class="tab" onclick="switchTab('stress',this)">&#x1F9EA; &#x58D3;&#x529B;&#x6E2C;&#x8A66;</button>
+
+
 </div>
 <div class="panel active" id="panel-pool">
   <div class="shbar">
@@ -601,7 +604,26 @@ tr:hover{background:var(--sf2)}
   </div>
 </div>
 
-<div class="panel" id="panel-backtest">
+<div class="panel" id="panel-stress">
+  <div class="card">
+    <div class="ct">&#x58D3;&#x529B;&#x6E2C;&#x8A66;</div>
+    <div class="g3">
+      <div class="fi"><label>&#x6A21;&#x64EC;&#x6B21;&#x6578;</label><input type="number" id="stSimN" value="1000" min="100" max="5000" step="100"></div>
+      <div class="fi"><label>Block Size (&#x6708;)</label><input type="number" id="stBlock" value="4" min="1" max="12"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="bo" onclick="runMonteCarlo()" style="flex:1">&#x25B6; Monte Carlo</button>
+      <button class="bo" onclick="runBlockBootstrap()" style="flex:1">&#x25B6; Block Bootstrap</button>
+      <button class="bo sm" onclick="$('stressMetrics').innerHTML=''" style="color:var(--re);border-color:var(--re)">&#x1F5D1;</button>
+    </div>
+    <div class="log" id="stressLog"></div>
+  </div>
+  <div id="stressRes" class="hidden">
+    <div id="stressMetrics"></div>
+  </div>
+</div>
+
+
   <div class="card">
     <div class="ct">&#x56DE;&#x6E2C;&#x8A2D;&#x5B9A;</div>
     <div class="g3">
@@ -642,6 +664,10 @@ tr:hover{background:var(--sf2)}
           </label>
           <label style="display:flex;align-items:center;gap:4px;cursor:pointer">
             <input type="radio" name="wtMode" id="wtRank" value="rank" style="width:14px;accent-color:var(--tw)"> &#x6392;&#x540D;&#x52A0;&#x6B0A;
+        <label style="display:flex;align-items:center;gap:4px;">
+  <input type="radio" name="wtMode" value="ivol"> IV&#x52A0;&#x6B0A;
+</label>
+
           </label>
         </div>
       </div>
@@ -936,6 +962,27 @@ function updFetchStat(){
     return '<span class="bdg" style="background:'+bg+';color:'+col+';border:1px solid '+bd+'">'+s.c+'</span>';
   }).join('');
 }
+  function calcVol(bars, dateStr, win) {
+  if (!bars) return null;
+  var idx = -1;
+  for (var i = 0; i < bars.length; i++) {
+    if (bars[i].date <= dateStr) idx = i; else break;
+  }
+  if (idx < win) return null;
+  var rets = [];
+  for (var j = idx - win + 1; j <= idx; j++) {
+    if (bars[j-1] && bars[j].c > 0 && bars[j-1].c > 0) {
+      rets.push(bars[j].c / bars[j-1].c - 1);
+    }
+  }
+  if (rets.length < 10) return null;
+  var mean = rets.reduce(function(a, b) { return a + b; }, 0) / rets.length;
+  var variance = rets.reduce(function(a, b) {
+    return a + Math.pow(b - mean, 2);
+  }, 0) / rets.length;
+  return Math.sqrt(variance * 252);
+}
+
 function calcMA(bars, dateStr, period) {
   if (!bars || !bars.length) return null;
   
@@ -1294,21 +1341,31 @@ var sc2 = calcAllScores(scoringM);
     var pools = { 'tw': [], 'us': [], 'etf': [] };
     var useMA60 = $('ma60Filter') ? $('ma60Filter').value === 'on' : true;
 
+        var exitMap = {};
+    if (useMA60) {
+      Object.keys(holdings).forEach(function(c) {
+        if (c === 'CASH') return;
+        var bars = DAILY[c]; if (!bars) return;
+        var ma = calcMA(bars, scoreM, 60);
+        var price = getPriceOnDate(bars, scoreM);
+        var prevDate = getPrevWorkDay(refDaily, scoreM, 5);
+        var prevMa = calcMA(bars, prevDate, 60);
+        var belowMA = ma && price && price < ma;
+        var slopeNeg = ma && prevMa && ma < prevMa;
+        if (belowMA || slopeNeg) exitMap[c] = true;
+      });
+    }
+
     valid.forEach(function(r) {
       var passMom = r.r240 !== null && r.r240 > hurdle && DEFENSIVE.indexOf(r.s.c) === -1;
       if (!passMom) return;
-      
-      var ma60 = calcMA(DAILY[r.s.c], scoreM, 60);
-      var currentPrice = getPriceOnDate(DAILY[r.s.c], scoreM);
-      var isAboveMA = ma60 && currentPrice && currentPrice >= ma60;
-      var passMA = useMA60 ? isAboveMA : true;
-      if (!passMA) return;
-      
-      var p = r.s.pool; 
+      if (exitMap[r.s.c]) return;
+      var p = r.s.pool;
       if (p === 'tw' || p === 'us' || p === 'etf') {
         if (pools[p]) pools[p].push(r);
       }
     });
+
 
     pools['tw'].sort(function(a, b) { return b.score - a.score; });
     pools['us'].sort(function(a, b) { return b.score - a.score; });
@@ -1336,15 +1393,13 @@ var sc2 = calcAllScores(scoringM);
     const useMA = document.getElementById('ma60Filter').value === 'on';
     
     // [預過濾]：將不符合 TS 或 MA 門檻的直接踢掉
-    var candidates = valid.filter(r => {
-      const passTS = r.r240 !== null && r.r240 > hurdle;
-      if (!passTS) return false;
-      // 排除防禦性資產，避免它們進入主排行
+        var candidates = valid.filter(function(r) {
+      if (r.r240 === null || r.r240 <= hurdle) return false;
       if (['TLT', 'GLD', 'SGOV'].indexOf(r.s.c) !== -1) return false;
-      // 執行嚴格 MA 濾網 (前面段落定義的函數)
-      if (useMA && !isStrictTechnicalPass(r.s.c, scoreM)) return false;
+      if (exitMap[r.s.c]) return false;
       return true;
     });
+
 
     if (mode === 'large') {
       // --- 大池模式：全體大排行 ---
@@ -1419,8 +1474,22 @@ var sc2 = calcAllScores(scoringM);
         var ldenom = sel.length * (sel.length + 1) / 2;
         sel.forEach(function(r, i) { target[r.s.c] = lScale * ((sel.length - i) / ldenom) * exposure; });
       } else {
-        var lw = (lScale / sel.length) * exposure;
-        sel.forEach(function(r) { target[r.s.c] = lw; });
+        if (wtMode === 'ivol') {
+  var volSum = 0;
+  var ivolArr = sel.map(function(r) {
+    var v = calcVol(DAILY[r.s.c], scoreM, 60);
+    v = (v && v > 0) ? v : 0.2;
+    volSum += 1 / v;
+    return { c: r.s.c, iv: 1 / v };
+  });
+  ivolArr.forEach(function(x) {
+    target[x.c] = (lScale * x.iv / volSum) * exposure;
+  });
+} else {
+  var lw = (lScale / sel.length) * exposure;
+  sel.forEach(function(r) { target[r.s.c] = lw; });
+}
+
       }
       
       // 配置空頭 (Short)
@@ -1809,10 +1878,10 @@ async function calcSignal() {
   const mode = $('poolMode').value, useMA = $('ma60Filter').value === 'on', ct = gv('corrT') || 0.75;
   var sel = [], rejectedMap = {}; 
 
-  allScores.forEach(r => {
-    if (r.r240 <= hurdle) rejectedMap[r.s.c] = "TS 淘汰";
-    else if (useMA && !isStrictTechnicalPass(r.s.c, latestDate)) rejectedMap[r.s.c] = "季線淘汰";
+    allScores.forEach(function(r) {
+    if (r.r240 <= hurdle) rejectedMap[r.s.c] = 'TS \u6DD8\u6C70';
   });
+
 
   if (mode === 'large') {
     var candidates = allScores.filter(r => !rejectedMap[r.s.c]).sort((a,b)=>b.score-a.score);
@@ -1965,6 +2034,158 @@ window.onload = async function() {
 
   var out = $('btResult') || $('result') || $('btOut');
   if (out) out.innerHTML = html;
+}
+function runMonteCarlo() {
+  if (!BT_RESULT) { alert('Run backtest first'); return; }
+  var simN = parseInt($('stSimN') ? $('stSimN').value : '1000') || 1000;
+  var rets = BT_RESULT.records.map(function(r) { return r.pRet; });
+  var init = BT_RESULT.initial;
+  var n = rets.length;
+  sl('stressLog', 'Running Monte Carlo x' + simN + '...', null);
+  showL('Monte Carlo...');
+  setTimeout(function() {
+    try {
+      var cagrs = [], mdds = [], sharpes = [];
+      for (var s = 0; s < simN; s++) {
+        var sim = [];
+        for (var i = 0; i < n; i++) {
+          sim.push(rets[Math.floor(Math.random() * n)]);
+        }
+        var nav = init, peak = init, mdd = 0;
+        sim.forEach(function(r) {
+          nav *= (1 + r);
+          if (nav > peak) peak = nav;
+          var dd = (nav - peak) / peak;
+          if (dd < mdd) mdd = dd;
+        });
+        var yrs = n / 12;
+        var cagr = Math.pow(nav / init, 1 / yrs) - 1;
+        var avg = sim.reduce(function(a, b) { return a + b; }, 0) / sim.length;
+        var std = Math.sqrt(sim.reduce(function(a, b) {
+          return a + Math.pow(b - avg, 2);
+        }, 0) / sim.length) * Math.sqrt(12);
+        var sharpe = std > 0 ? (cagr - 0.015) / std : 0;
+        cagrs.push(cagr); mdds.push(mdd); sharpes.push(sharpe);
+      }
+      renderStress(cagrs, mdds, sharpes, 'Monte Carlo', simN);
+      sl('stressLog', 'Monte Carlo \u5B8C\u6210 ' + simN + ' \u6B21', true);
+    } catch(e) { sl('stressLog', 'Error: ' + e.message, false); }
+    finally { hideL(); }
+  }, 80);
+}
+
+function runBlockBootstrap() {
+  if (!BT_RESULT) { alert('Run backtest first'); return; }
+  var simN = parseInt($('stSimN') ? $('stSimN').value : '1000') || 1000;
+  var blk = parseInt($('stBlock') ? $('stBlock').value : '4') || 4;
+  var rets = BT_RESULT.records.map(function(r) { return r.pRet; });
+  var init = BT_RESULT.initial;
+  var n = rets.length;
+  sl('stressLog', 'Running Block Bootstrap x' + simN + ' block=' + blk + '...', null);
+  showL('Block Bootstrap...');
+  setTimeout(function() {
+    try {
+      var cagrs = [], mdds = [], sharpes = [];
+      for (var s = 0; s < simN; s++) {
+        var sim = [];
+        while (sim.length < n) {
+          var start = Math.floor(Math.random() * (n - blk + 1));
+          for (var b = 0; b < blk && sim.length < n; b++) {
+            sim.push(rets[start + b]);
+          }
+        }
+        var nav = init, peak = init, mdd = 0;
+        sim.forEach(function(r) {
+          nav *= (1 + r);
+          if (nav > peak) peak = nav;
+          var dd = (nav - peak) / peak;
+          if (dd < mdd) mdd = dd;
+        });
+        var yrs = n / 12;
+        var cagr = Math.pow(nav / init, 1 / yrs) - 1;
+        var avg = sim.reduce(function(a, b) { return a + b; }, 0) / sim.length;
+        var std = Math.sqrt(sim.reduce(function(a, b) {
+          return a + Math.pow(b - avg, 2);
+        }, 0) / sim.length) * Math.sqrt(12);
+        var sharpe = std > 0 ? (cagr - 0.015) / std : 0;
+        cagrs.push(cagr); mdds.push(mdd); sharpes.push(sharpe);
+      }
+      renderStress(cagrs, mdds, sharpes, 'Block Bootstrap (blk=' + blk + ')', simN);
+      sl('stressLog', 'Block Bootstrap \u5B8C\u6210 ' + simN + ' \u6B21', true);
+    } catch(e) { sl('stressLog', 'Error: ' + e.message, false); }
+    finally { hideL(); }
+  }, 80);
+}
+
+function renderStress(cagrs, mdds, sharpes, label, simN) {
+  function ptile(arr, p) {
+    var s = arr.slice().sort(function(a, b) { return a - b; });
+    var i = (p / 100) * (s.length - 1);
+    var lo = Math.floor(i), hi = Math.ceil(i);
+    return s[lo] + (s[hi] - s[lo]) * (i - lo);
+  }
+  function avgArr(arr) { return arr.reduce(function(a, b) { return a + b; }, 0) / arr.length; }
+  function fmtP(v) { return (v >= 0 ? '+' : '') + (v * 100).toFixed(2) + '%'; }
+  function fmtN(v) { return v.toFixed(2); }
+  function gc(v) { return v >= 0 ? 'var(--gr)' : 'var(--re)'; }
+
+  var winRate = cagrs.filter(function(v) { return v > 0; }).length / simN;
+  var orig = BT_RESULT.records;
+  var origInit = BT_RESULT.initial;
+  var origLast = orig[orig.length - 1];
+  var origYrs = (new Date(origLast.month) - new Date(orig[0].month)) / (365.25 * 86400000);
+  var origCagr = Math.pow(origLast.nav / origInit, 1 / origYrs) - 1;
+  var origRets = orig.map(function(r) { return r.pRet; });
+  var origAvg = avgArr(origRets);
+  var origStd = Math.sqrt(origRets.reduce(function(a, b) {
+    return a + Math.pow(b - origAvg, 2);
+  }, 0) / origRets.length) * Math.sqrt(12);
+  var origSharpe = origStd > 0 ? (origCagr - 0.015) / origStd : 0;
+  var origPeak = origInit, origMdd = 0;
+  orig.forEach(function(r) {
+    if (r.nav > origPeak) origPeak = r.nav;
+    var dd = (r.nav - origPeak) / origPeak;
+    if (dd < origMdd) origMdd = dd;
+  });
+
+  var rows = [
+    ['\u6307\u6A19 CAGR', cagrs, true, origCagr],
+    ['\u6307\u6A19 MDD', mdds, true, origMdd],
+    ['\u6307\u6A19 Sharpe', sharpes, false, origSharpe]
+  ];
+
+  var html = '<div class="card" style="border-top:3px solid var(--ac);margin-bottom:10px;">';
+  html += '<div class="ct">' + label + ' (N=' + simN + ')</div>';
+  html += '<div class="tw-wrap"><table><thead><tr>';
+  html += '<th></th><th>P10</th><th>P25</th><th>P50</th><th>P75</th><th>P90</th>';
+  html += '<th>\u5E73\u5747</th><th>\u539F\u59CB</th></tr></thead><tbody>';
+
+  rows.forEach(function(row) {
+    var name = row[0], arr = row[1], isPct = row[2], origVal = row[3];
+    var f = isPct ? fmtP : fmtN;
+    var p10 = ptile(arr, 10), p25 = ptile(arr, 25);
+    var med = ptile(arr, 50), p75 = ptile(arr, 75), p90 = ptile(arr, 90);
+    var av = avgArr(arr);
+    html += '<tr>';
+    html += '<td style="color:var(--mu);font-size:10px">' + name + '</td>';
+    html += '<td class="mono" style="color:' + gc(p10) + '">' + f(p10) + '</td>';
+    html += '<td class="mono" style="color:' + gc(p25) + '">' + f(p25) + '</td>';
+    html += '<td class="mono" style="color:' + gc(med) + '">' + f(med) + '</td>';
+    html += '<td class="mono" style="color:' + gc(p75) + '">' + f(p75) + '</td>';
+    html += '<td class="mono" style="color:' + gc(p90) + '">' + f(p90) + '</td>';
+    html += '<td class="mono" style="color:' + gc(av) + '">' + f(av) + '</td>';
+    html += '<td class="mono" style="color:var(--ye)">' + f(origVal) + '</td>';
+    html += '</tr>';
+  });
+
+  html += '<tr><td style="color:var(--mu);font-size:10px">\u52DD\u7387(CAGR>0)</td>';
+  html += '<td colspan="7" class="mono" style="color:var(--gr)">';
+  html += (winRate * 100).toFixed(1) + '%</td></tr>';
+  html += '</tbody></table></div></div>';
+
+  $('stressRes').classList.remove('hidden');
+  var el = $('stressMetrics');
+  if (el) el.innerHTML = el.innerHTML + html;
 }
 
 </script>
