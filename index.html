@@ -2566,20 +2566,24 @@ function renderWFNCompare(results, init, minTY, testWY) {
         });
     }, 100);
 }
-  function runPoolCompare() {
+  
+function runPoolCompare() {
   if (!CACHE_BUILT) { alert('Build cache first'); return; }
-  var minTY = parseInt($('wfMinTrain') ? $('wfMinTrain').value : '8') || 8;
-  var testWY = parseInt($('wfTestWin') ? $('wfTestWin').value : '1') || 1;
+  var minTY = parseInt($('wfMinTrain') && $('wfMinTrain').value ? $('wfMinTrain').value : '8') || 8;
+  var testWY = parseInt($('wfTestWin') && $('wfTestWin').value ? $('wfTestWin').value : '1') || 1;
+  var etfQ = parseInt($('wfETFQuota') && $('wfETFQuota').value ? $('wfETFQuota').value : '1');
+  if (isNaN(etfQ) || etfQ < 0) etfQ = 1;
   var masterTicker = DAILY['^TWII'] ? '^TWII' : (DAILY['SPY'] ? 'SPY' : null);
   if (!masterTicker) { alert('No benchmark data'); return; }
   var refDaily = DAILY[masterTicker];
+  if (!refDaily || !refDaily.length) { alert('No benchmark data loaded'); return; }
   var freq = $('btFreq') ? $('btFreq').value : '1';
   var allM = getPreciseRebalanceDates(refDaily, freq);
-  if (!allM.length) { alert('No rebalance dates'); return; }
+  if (!allM || !allM.length) { alert('No rebalance dates'); return; }
   var firstYear = parseInt(allM[0].slice(0, 4));
   var lastYear = parseInt(allM[allM.length - 1].slice(0, 4));
   var firstTestYear = firstYear + minTY;
-  if (firstTestYear > lastYear) { alert('Not enough data'); return; }
+  if (firstTestYear > lastYear) { alert('Not enough data (need ' + minTY + ' train years)'); return; }
   var init = gv('btCap') || 100000;
   var wtEl = document.querySelector('input[name="wtMode"]:checked');
   var mode = wtEl ? wtEl.value : 'eq';
@@ -2590,147 +2594,144 @@ function renderWFNCompare(results, init, minTY, testWY) {
   var origTW = $('btQuotaTW') ? $('btQuotaTW').value : '2';
   var origUS = $('btQuotaUS') ? $('btQuotaUS').value : '2';
   var origETF = $('btQuotaETF') ? $('btQuotaETF').value : '1';
-  sl('stressLog', 'Running Pool Compare (Part A + B)...', null);
+  sl('stressLog', 'Running Pool Compare A+B...', null);
   showL('Pool Compare A+B...');
+
+  function restoreAll() {
+    if (document.getElementById('poolMode')) document.getElementById('poolMode').value = origPool;
+    if ($('btQuotaTW')) $('btQuotaTW').value = origTW;
+    if ($('btQuotaUS')) $('btQuotaUS').value = origUS;
+    if ($('btQuotaETF')) $('btQuotaETF').value = origETF;
+    if ($('btH')) $('btH').value = origH;
+    if ($('btS')) $('btS').value = origS;
+    if ($('btE')) $('btE').value = origE;
+  }
 
   setTimeout(function() {
     try {
-      // -- helper: run one WF sweep and return spliced OOS metrics --
       function runOneWF(poolMode, tw, us, etf, totalN) {
-        if (document.getElementById('poolMode')) document.getElementById('poolMode').value = poolMode;
-        if ($('btQuotaTW')) $('btQuotaTW').value = tw;
-        if ($('btQuotaUS')) $('btQuotaUS').value = us;
-        if ($('btQuotaETF')) $('btQuotaETF').value = etf;
-        if ($('btH')) $('btH').value = totalN;
-        var oosMonths = [];
-        for (var ty = firstTestYear; ty + testWY - 1 <= lastYear; ty += testWY) {
-          var tS = ty + '-01', tE = (ty + testWY - 1) + '-12';
-          if ($('btS')) $('btS').value = tS;
-          if ($('btE')) $('btE').value = tE;
-          var recs = runBTcore(totalN, mode);
-          if (!recs || recs.length < 2) continue;
-          recs.forEach(function(r) { oosMonths.push(r.pRet); });
+        try {
+          if (document.getElementById('poolMode')) document.getElementById('poolMode').value = poolMode;
+          if ($('btQuotaTW')) $('btQuotaTW').value = tw;
+          if ($('btQuotaUS')) $('btQuotaUS').value = us;
+          if ($('btQuotaETF')) $('btQuotaETF').value = etf;
+          if ($('btH')) $('btH').value = totalN;
+          var oosMonths = [];
+          for (var ty = firstTestYear; ty + testWY - 1 <= lastYear; ty += testWY) {
+            var tS = ty + '-01', tE = (ty + testWY - 1) + '-12';
+            if ($('btS')) $('btS').value = tS;
+            if ($('btE')) $('btE').value = tE;
+            var recs = runBTcore(totalN, mode);
+            if (!recs || recs.length < 2) continue;
+            recs.forEach(function(r) { oosMonths.push(r.pRet); });
+          }
+          if ($('btS')) $('btS').value = origS;
+          if ($('btE')) $('btE').value = origE;
+          if (!oosMonths.length) return null;
+          var sNav = init, sPeak = init, sMdd = 0;
+          oosMonths.forEach(function(r) {
+            sNav *= (1 + r);
+            if (sNav > sPeak) sPeak = sNav;
+            var dd = (sNav - sPeak) / sPeak;
+            if (dd < sMdd) sMdd = dd;
+          });
+          var sYrs = oosMonths.length / 12;
+          var sCagr = sYrs > 0 ? Math.pow(sNav / init, 1 / sYrs) - 1 : 0;
+          var sAvg = oosMonths.reduce(function(a, b) { return a + b; }, 0) / oosMonths.length;
+          var sStd = Math.sqrt(oosMonths.reduce(function(a, b) { return a + Math.pow(b - sAvg, 2); }, 0) / oosMonths.length) * Math.sqrt(12);
+          var sSharpe = sStd > 0 ? (sCagr - 0.015) / sStd : 0;
+          return { cagr: sCagr, mdd: sMdd, sharpe: sSharpe, nav: sNav, months: oosMonths.length };
+        } catch (innerE) {
+          if ($('btS')) $('btS').value = origS;
+          if ($('btE')) $('btE').value = origE;
+          console.error('runOneWF error:', innerE);
+          return null;
         }
-        if ($('btS')) $('btS').value = origS;
-        if ($('btE')) $('btE').value = origE;
-        if (!oosMonths.length) return null;
-        var sNav = init, sPeak = init, sMdd = 0;
-        oosMonths.forEach(function(r) {
-          sNav *= (1 + r);
-          if (sNav > sPeak) sPeak = sNav;
-          var dd = (sNav - sPeak) / sPeak;
-          if (dd < sMdd) sMdd = dd;
-        });
-        var sYrs = oosMonths.length / 12;
-        var sCagr = sYrs > 0 ? Math.pow(sNav / init, 1 / sYrs) - 1 : 0;
-        var sAvg = oosMonths.reduce(function(a, b) { return a + b; }, 0) / oosMonths.length;
-        var sStd = Math.sqrt(oosMonths.reduce(function(a, b) { return a + Math.pow(b - sAvg, 2); }, 0) / oosMonths.length) * Math.sqrt(12);
-        var sSharpe = sStd > 0 ? (sCagr - 0.015) / sStd : 0;
-        return { cagr: sCagr, mdd: sMdd, sharpe: sSharpe, nav: sNav, months: oosMonths.length };
       }
 
-      // ==== PART A: Large Pool, fixed ratio scale ====
-      // ETF=1 fixed, TW/US alternate as N 
-      // Part A uses large pool (N = total, pool ignored by runBTcore when mode=large)
+      // ==== PART A: Large Pool, ETF fixed, TW/US scale ====
+      var planA = [
+        { n: 2 + etfQ, tw: 1, us: 1, etf: etfQ },
+        { n: 3 + etfQ, tw: 2, us: 1, etf: etfQ },
+        { n: 4 + etfQ, tw: 2, us: 2, etf: etfQ },
+        { n: 5 + etfQ, tw: 3, us: 2, etf: etfQ },
+        { n: 6 + etfQ, tw: 3, us: 3, etf: etfQ },
+        { n: 7 + etfQ, tw: 4, us: 3, etf: etfQ },
+        { n: 8 + etfQ, tw: 4, us: 4, etf: etfQ },
+        { n: 9 + etfQ, tw: 5, us: 4, etf: etfQ }
+      ];
+      var partA = [];
       for (var ai = 0; ai < planA.length; ai++) {
         var p = planA[ai];
-        $('loadTxt').textContent = 'Part A: N=' + p.n + ' (' + (ai+1) + '/' + planA.length + ')';
+        $('loadTxt').textContent = 'Part A: N=' + p.n + ' (' + (ai + 1) + '/' + planA.length + ')';
         var res = runOneWF('large', p.tw, p.us, p.etf, p.n);
         partA.push({ n: p.n, tw: p.tw, us: p.us, etf: p.etf, res: res });
       }
-var etfQ = parseInt(document.getElementById('wfETFQuota') ? document.getElementById('wfETFQuota').value : '1') || 1;
-var planA = [
-  { n: 2 + etfQ, tw: 1, us: 1, etf: etfQ },
-  { n: 3 + etfQ, tw: 2, us: 1, etf: etfQ },
-  { n: 4 + etfQ, tw: 2, us: 2, etf: etfQ },
-  { n: 5 + etfQ, tw: 3, us: 2, etf: etfQ },
-  { n: 6 + etfQ, tw: 3, us: 3, etf: etfQ },
-  { n: 7 + etfQ, tw: 4, us: 3, etf: etfQ },
-  { n: 8 + etfQ, tw: 4, us: 4, etf: etfQ },
-  { n: 9 + etfQ, tw: 5, us: 4, etf: etfQ }
-];
 
-      // ==== PART B: Small Pool, ETF=1 fixed, TW x US matrix ====
-      var partB = [];
+      // ==== PART B: Small Pool, ETF fixed, TW x US matrix ====
       var twRange = [1, 2, 3, 4, 5];
       var usRange = [1, 2, 3, 4, 5];
       var totalB = twRange.length * usRange.length;
       var bi = 0;
+      var partB = [];
       for (var ti = 0; ti < twRange.length; ti++) {
         partB.push([]);
         for (var ui = 0; ui < usRange.length; ui++) {
           var tw = twRange[ti], us = usRange[ui], totalN = tw + us + etfQ;
-bi++;
-$('loadTxt').textContent = 'Part B: TW=' + tw + ' US=' + us + ' (' + bi + '/' + totalB + ')';
-var res2 = runOneWF('small', tw, us, etfQ, totalN);
-partB[ti].push({ tw: tw, us: us, etf: etfQ, n: totalN, res: res2 });
-
+          bi++;
+          $('loadTxt').textContent = 'Part B: TW=' + tw + ' US=' + us + ' (' + bi + '/' + totalB + ')';
+          var res2 = runOneWF('small', tw, us, etfQ, totalN);
+          partB[ti].push({ tw: tw, us: us, etf: etfQ, n: totalN, res: res2 });
         }
       }
 
-      // restore
-      if (document.getElementById('poolMode')) document.getElementById('poolMode').value = origPool;
-      if ($('btQuotaTW')) $('btQuotaTW').value = origTW;
-      if ($('btQuotaUS')) $('btQuotaUS').value = origUS;
-      if ($('btQuotaETF')) $('btQuotaETF').value = origETF;
-      if ($('btH')) $('btH').value = origH;
-
-      renderPoolCompare(partA, partB, twRange, usRange, init, minTY, testWY);
-      sl('stressLog', 'Pool Compare A+B done', true);
-    } catch(e) {
-      if (document.getElementById('poolMode')) document.getElementById('poolMode').value = origPool;
-      if ($('btQuotaTW')) $('btQuotaTW').value = origTW;
-      if ($('btQuotaUS')) $('btQuotaUS').value = origUS;
-      if ($('btQuotaETF')) $('btQuotaETF').value = origETF;
-      if ($('btH')) $('btH').value = origH;
-      if ($('btS')) $('btS').value = origS;
-      if ($('btE')) $('btE').value = origE;
+      restoreAll();
+      renderPoolCompare(partA, partB, twRange, usRange, init, minTY, testWY, etfQ);
+      sl('stressLog', 'Pool Compare A+B done (ETF=' + etfQ + ')', true);
+    } catch (e) {
+      restoreAll();
       sl('stressLog', 'Error: ' + e.message, false);
-      console.error(e);
+      console.error('runPoolCompare error:', e);
     }
     hideL();
   }, 80);
 }
 
-function renderPoolCompare(partA, partB, twRange, usRange, init, minTY, testWY) {
+function renderPoolCompare(partA, partB, twRange, usRange, init, minTY, testWY, etfQ) {
   function fp(v) { return (v >= 0 ? '+' : '') + (v * 100).toFixed(2) + '%'; }
   function gc(v) { return v >= 0 ? 'var(--gr)' : 'var(--re)'; }
   function sc(v) { return v >= 1.0 ? 'var(--gr)' : v >= 0.7 ? 'var(--ye)' : 'var(--re)'; }
   function heatColor(v, mn, mx) {
-    if (v === null) return '#1a2030';
+    if (v === null || v === undefined) return '#1a2030';
     var t = mx > mn ? (v - mn) / (mx - mn) : 0.5;
+    t = Math.max(0, Math.min(1, t));
     var r = Math.round(255 * (1 - t));
     var g = Math.round(229 * t);
     return 'rgb(' + r + ',' + g + ',80)';
   }
 
-  var html = '<div class="card" style="border-top:3px solid var(--ac);margin-bottom:10px;">';
-  html += '<div class="ct">POOL COMPARE (Train=' + minTY + 'Y / Test=' + testWY + 'Y)</div>';
-
-  // -- PART A --
-  html += '<div style="background:var(--sf2);border:1px solid var(--bd);border-radius:3px;padding:10px;margin-bottom:14px;">';
-  html += '<div style="font-size:12px;font-weight:700;color:var(--ac);margin-bottom:6px">PART A - Large Pool (ETF=1 fixed, TW/US scale with N)</div>';
-  html += '<div style="font-size:11px;color:var(--mu);margin-bottom:8px;line-height:1.7">';
-  html += 'Fixed ETF=1, TW and US alternate as N grows (e.g. N=5: TW=2 US=2 ETF=1).<br>';
-  html += 'Large pool mode: all stocks ranked globally, quota ignored.<br>';
-  html += 'Purpose: isolate the effect of total position count on OOS performance.';
-  html += '</div>';
-  html += '<div class="tw-wrap"><table><thead><tr>';
-  html += '<th>N (total)</th><th>TW</th><th>US</th><th>ETF</th>';
-  html += '<th>OOS CAGR</th><th>OOS MDD</th><th>Sharpe</th><th>Final NAV</th>';
-  html += '</tr></thead><tbody>';
-
   var validA = partA.filter(function(p) { return p.res; });
   var bestAS = validA.length ? validA.reduce(function(a, b) { return b.res.sharpe > a.res.sharpe ? b : a; }) : null;
   var bestAC = validA.length ? validA.reduce(function(a, b) { return b.res.cagr > a.res.cagr ? b : a; }) : null;
 
+  var html = '<div class="card" style="border-top:3px solid var(--ac);margin-bottom:10px;">';
+  html += '<div class="ct">POOL COMPARE (Train=' + minTY + 'Y / Test=' + testWY + 'Y / ETF=' + etfQ + ')</div>';
+
+  // -- PART A --
+  html += '<div style="background:var(--sf2);border:1px solid var(--bd);border-radius:3px;padding:10px;margin-bottom:14px;">';
+  html += '<div style="font-size:12px;font-weight:700;color:var(--ac);margin-bottom:6px">PART A - Large Pool (ETF=' + etfQ + ' fixed, TW/US scale with N)</div>';
+  html += '<div style="font-size:11px;color:var(--mu);margin-bottom:8px;line-height:1.7">Large pool mode: all stocks compete globally. ETF quota=' + etfQ + ' fixed. TW and US alternate as N grows.<br>Purpose: isolate the effect of total position count on OOS performance.</div>';
+  html += '<div class="tw-wrap"><table><thead><tr><th>N (total)</th><th>TW</th><th>US</th><th>ETF</th><th>OOS CAGR</th><th>OOS MDD</th><th>Sharpe</th><th>Final NAV</th></tr></thead><tbody>';
   partA.forEach(function(p) {
-    if (!p.res) { html += '<tr><td>' + p.n + '</td><td colspan="7" style="color:var(--mu)">no data</td></tr>'; return; }
+    if (!p.res) {
+      html += '<tr><td class="mono">' + p.n + '</td><td>' + p.tw + '</td><td>' + p.us + '</td><td>' + p.etf + '</td><td colspan="4" style="color:var(--mu)">no data</td></tr>';
+      return;
+    }
     var isBestS = bestAS && p.n === bestAS.n;
     var isBestC = bestAC && p.n === bestAC.n;
     var mark = isBestS ? ' *S' : (isBestC ? ' *C' : '');
     var nameCol = isBestS ? 'var(--gr)' : isBestC ? 'var(--tw)' : 'var(--tx)';
-    html += '<tr style="' + (isBestS || isBestC ? 'background:rgba(255,255,255,0.04)' : '') + '">';
+    html += '<tr style="' + ((isBestS || isBestC) ? 'background:rgba(255,255,255,0.04)' : '') + '">';
     html += '<td class="mono" style="font-weight:700;color:' + nameCol + '">' + p.n + mark + '</td>';
     html += '<td class="mono" style="color:var(--tw)">' + p.tw + '</td>';
     html += '<td class="mono" style="color:var(--us)">' + p.us + '</td>';
@@ -2742,100 +2743,81 @@ function renderPoolCompare(partA, partB, twRange, usRange, init, minTY, testWY) 
     html += '</tr>';
   });
   html += '</tbody></table></div>';
-  html += '<div style="font-size:10px;color:var(--mu);margin-top:4px;">*S = best Sharpe   *C = best CAGR</div>';
+  html += '<div style="font-size:10px;color:var(--mu);margin-top:4px;">*S = best Sharpe | *C = best CAGR</div>';
   html += '</div>';
 
   // -- PART B --
-  html += '<div style="background:var(--sf2);border:1px solid var(--bd);border-radius:3px;padding:10px;margin-bottom:14px;">';
-  html += '<div style="font-size:12px;font-weight:700;color:var(--ye);margin-bottom:6px">PART B - Small Pool Matrix (ETF=1 fixed, TW x US heatmap)</div>';
-  html += '<div style="font-size:11px;color:var(--mu);margin-bottom:8px;line-height:1.7">';
-  html += 'ETF quota fixed at 1. TW and US quotas vary from 1 to 5 independently (25 combinations).<br>';
-  html += 'Small pool mode: each pool competes internally before cross-pool selection.<br>';
-  html += 'Heatmap shows OOS Sharpe - green = higher, red = lower.<br>';
-  html += 'Purpose: find the optimal TW/US ratio under small-pool constraints.';
-  html += '</div>';
-
-  // collect all sharpe values for color scaling
-  var allSharpes = [];
+  var allSharpes = [], allCagrs = [];
   for (var ti = 0; ti < partB.length; ti++) {
     for (var ui = 0; ui < partB[ti].length; ui++) {
-      if (partB[ti][ui].res) allSharpes.push(partB[ti][ui].res.sharpe);
+      var cell = partB[ti][ui];
+      if (cell && cell.res) {
+        allSharpes.push(cell.res.sharpe);
+        allCagrs.push(cell.res.cagr);
+      }
     }
   }
   var minSh = allSharpes.length ? Math.min.apply(null, allSharpes) : 0;
   var maxSh = allSharpes.length ? Math.max.apply(null, allSharpes) : 1;
+  var minCa = allCagrs.length ? Math.min.apply(null, allCagrs) : 0;
+  var maxCa = allCagrs.length ? Math.max.apply(null, allCagrs) : 1;
 
-  // find best cell
   var bestB = null;
   for (var ti = 0; ti < partB.length; ti++) {
     for (var ui = 0; ui < partB[ti].length; ui++) {
       var cell = partB[ti][ui];
-      if (!cell.res) continue;
+      if (!cell || !cell.res) continue;
       if (!bestB || cell.res.sharpe > bestB.res.sharpe) bestB = cell;
     }
   }
 
-  // Sharpe heatmap
-  html += '<div style="margin-bottom:8px"><div style="font-size:10px;color:var(--mu);margin-bottom:4px;font-weight:700">OOS SHARPE HEATMAP</div>';
-  html += '<div style="overflow-x:auto"><table style="border-collapse:separate;border-spacing:3px;">';
-  html += '<thead><tr><th style="font-size:10px;color:var(--mu);padding:3px 6px">TW \\ US</th>';
-  for (var ui = 0; ui < usRange.length; ui++) {
-    html += '<th style="font-size:10px;color:var(--us);padding:3px 8px">US=' + usRange[ui] + '</th>';
-  }
-  html += '</tr></thead><tbody>';
-  for (var ti = 0; ti < twRange.length; ti++) {
-    html += '<tr><td style="font-size:10px;color:var(--tw);font-weight:700;padding:3px 6px">TW=' + twRange[ti] + '</td>';
+  html += '<div style="background:var(--sf2);border:1px solid var(--bd);border-radius:3px;padding:10px;margin-bottom:14px;">';
+  html += '<div style="font-size:12px;font-weight:700;color:var(--ye);margin-bottom:6px">PART B - Small Pool Matrix (ETF=' + etfQ + ' fixed, TW x US heatmap)</div>';
+  html += '<div style="font-size:11px;color:var(--mu);margin-bottom:8px;line-height:1.7">Small pool mode. ETF=' + etfQ + ' fixed. TW(1-5) x US(1-5) = 25 combos.<br>Heatmap color: green = higher, red = lower. White border = BEST combo.</div>';
+
+  function makeHeatTable(label, minVal, maxVal, valFn, fmtFn) {
+    var t = '<div style="margin-bottom:12px"><div style="font-size:10px;color:var(--mu);margin-bottom:4px;font-weight:700">' + label + '</div>';
+    t += '<div style="overflow-x:auto"><table style="border-collapse:separate;border-spacing:3px;">';
+    t += '<thead><tr><th style="font-size:10px;color:var(--mu);padding:3px 6px">TW \\ US</th>';
     for (var ui = 0; ui < usRange.length; ui++) {
-      var cell = partB[ti][ui];
-      var shVal = cell.res ? cell.res.sharpe : null;
-      var bgCol = heatColor(shVal, minSh, maxSh);
-      var isBest = bestB && cell.tw === bestB.tw && cell.us === bestB.us;
-      var border = isBest ? '2px solid #fff' : '1px solid #252d3d';
-      html += '<td style="background:' + bgCol + ';border:' + border + ';padding:5px 8px;text-align:center;border-radius:3px;">';
-      html += '<div class="mono" style="font-size:12px;color:#000;font-weight:700">' + (shVal !== null ? shVal.toFixed(2) : '--') + '</div>';
-      if (isBest) html += '<div style="font-size:9px;color:#000;font-weight:700">BEST</div>';
-      html += '</td>';
+      t += '<th style="font-size:10px;color:var(--us);padding:3px 8px">US=' + usRange[ui] + '</th>';
     }
-    html += '</tr>';
-  }
-  html += '</tbody></table></div></div>';
-
-  // CAGR heatmap
-  var allCagrs = [];
-  for (var ti = 0; ti < partB.length; ti++) {
-    for (var ui = 0; ui < partB[ti].length; ui++) {
-      if (partB[ti][ui].res) allCagrs.push(partB[ti][ui].res.cagr);
+    t += '</tr></thead><tbody>';
+    for (var ti = 0; ti < twRange.length; ti++) {
+      t += '<tr><td style="font-size:10px;color:var(--tw);font-weight:700;padding:3px 6px">TW=' + twRange[ti] + '</td>';
+      for (var ui = 0; ui < usRange.length; ui++) {
+        var cell = partB[ti] && partB[ti][ui] ? partB[ti][ui] : null;
+        var v = cell && cell.res ? valFn(cell.res) : null;
+        var bgCol = heatColor(v, minVal, maxVal);
+        var isBest = bestB && cell && cell.tw === bestB.tw && cell.us === bestB.us;
+        var border = isBest ? '2px solid #fff' : '1px solid #252d3d';
+        t += '<td style="background:' + bgCol + ';border:' + border + ';padding:5px 8px;text-align:center;border-radius:3px;">';
+        t += '<div class="mono" style="font-size:12px;color:#000;font-weight:700">' + (v !== null && v !== undefined ? fmtFn(v) : '--') + '</div>';
+        if (isBest) t += '<div style="font-size:9px;color:#000;font-weight:700">BEST</div>';
+        t += '</td>';
+      }
+      t += '</tr>';
     }
+    t += '</tbody></table></div></div>';
+    return t;
   }
-  var minCa = allCagrs.length ? Math.min.apply(null, allCagrs) : 0;
-  var maxCa = allCagrs.length ? Math.max.apply(null, allCagrs) : 1;
 
-  html += '<div style="margin-bottom:8px"><div style="font-size:10px;color:var(--mu);margin-bottom:4px;font-weight:700">OOS CAGR HEATMAP</div>';
-  html += '<div style="overflow-x:auto"><table style="border-collapse:separate;border-spacing:3px;">';
-  html += '<thead><tr><th style="font-size:10px;color:var(--mu);padding:3px 6px">TW \\ US</th>';
-  for (var ui = 0; ui < usRange.length; ui++) {
-    html += '<th style="font-size:10px;color:var(--us);padding:3px 8px">US=' + usRange[ui] + '</th>';
-  }
-  html += '</tr></thead><tbody>';
-  for (var ti = 0; ti < twRange.length; ti++) {
-    html += '<tr><td style="font-size:10px;color:var(--tw);font-weight:700;padding:3px 6px">TW=' + twRange[ti] + '</td>';
-    for (var ui = 0; ui < usRange.length; ui++) {
-      var cell = partB[ti][ui];
-      var caVal = cell.res ? cell.res.cagr : null;
-      var bgCol2 = heatColor(caVal, minCa, maxCa);
-      html += '<td style="background:' + bgCol2 + ';border:1px solid #252d3d;padding:5px 8px;text-align:center;border-radius:3px;">';
-      html += '<div class="mono" style="font-size:12px;color:#000;font-weight:700">' + (caVal !== null ? fp(caVal) : '--') + '</div>';
-      html += '</td>';
-    }
-    html += '</tr>';
-  }
-  html += '</tbody></table></div></div>';
+  html += makeHeatTable('OOS SHARPE HEATMAP', minSh, maxSh,
+    function(r) { return r.sharpe; },
+    function(v) { return v.toFixed(2); }
+  );
+  html += makeHeatTable('OOS CAGR HEATMAP', minCa, maxCa,
+    function(r) { return r.cagr; },
+    function(v) { return fp(v); }
+  );
 
-  // Best B summary
   if (bestB && bestB.res) {
     html += '<div style="background:var(--bd);border-radius:3px;padding:8px;font-size:11px;margin-top:6px;">';
-    html += 'Best small-pool combo: <b style="color:var(--tw)">TW=' + bestB.tw + '</b> + <b style="color:var(--us)">US=' + bestB.us + '</b> + ETF=1';
-    html += ' (N=' + bestB.n + ') | Sharpe <b style="color:var(--gr)">' + bestB.res.sharpe.toFixed(2) + '</b>';
+    html += 'Best small-pool combo: <b style="color:var(--tw)">TW=' + bestB.tw + '</b>';
+    html += ' + <b style="color:var(--us)">US=' + bestB.us + '</b>';
+    html += ' + ETF=' + etfQ;
+    html += ' (N=' + bestB.n + ')';
+    html += ' | Sharpe <b style="color:var(--gr)">' + bestB.res.sharpe.toFixed(2) + '</b>';
     html += ' | CAGR <b style="color:var(--gr)">' + fp(bestB.res.cagr) + '</b>';
     html += ' | MDD <b style="color:var(--re)">' + fp(bestB.res.mdd) + '</b>';
     html += '</div>';
@@ -2847,7 +2829,6 @@ function renderPoolCompare(partA, partB, twRange, usRange, init, minTY, testWY) 
   var el = $('stressMetrics');
   if (el) el.innerHTML = el.innerHTML + html;
 }
-
 
 </script>
 
