@@ -622,6 +622,8 @@ tr:hover{background:var(--sf2)}
       <button class="bo sm" onclick="$('stressMetrics').innerHTML=''" style="color:var(--re);border-color:var(--re)">&#x1F5D1;</button>
     </div>
     <button class="bo" onclick="runWalkForward()" style="width:100%;margin-top:6px;color:var(--ye);border-color:var(--ye)">&#x25B6; Walk-Forward Analysis (Anchored)</button>
+    <button class="bo" onclick="runWFNCompare()" style="width:100%;margin-top:6px;color:var(--ac);border-color:var(--ac)">&#x25B6; WF N&#x6BD4;&#x8F03; (N=2~15)</button>
+
     <div class="log" id="stressLog"></div>
   </div>
   <div id="stressRes" class="hidden">
@@ -2348,6 +2350,219 @@ function renderWalkForward(results, spliced) {
     if (container) container.classList.remove('hidden');
     var el = $('stressMetrics');
     if (el) el.innerHTML = el.innerHTML + html;
+}
+function runWFNCompare() {
+    if (!CACHE_BUILT) {
+        alert('Build cache first');
+        return;
+    }
+
+    var minTY = parseInt($('wfMinTrain') ? $('wfMinTrain').value : '8') || 8;
+    var testWY = parseInt($('wfTestWin') ? $('wfTestWin').value : '1') || 1;
+    var masterTicker = DAILY['^TWII'] ? '^TWII' : (DAILY['SPY'] ? 'SPY' : null);
+
+    if (!masterTicker) {
+        alert('No benchmark data');
+        return;
+    }
+
+    var refDaily = DAILY[masterTicker];
+    var freq = $('btFreq') ? $('btFreq').value : '1';
+    var allM = getPreciseRebalanceDates(refDaily, freq);
+
+    if (!allM.length) {
+        alert('No rebalance dates');
+        return;
+    }
+
+    var firstYear = parseInt(allM[0].slice(0, 4));
+    var lastYear = parseInt(allM[allM.length - 1].slice(0, 4));
+    var firstTestYear = firstYear + minTY;
+
+    if (firstTestYear > lastYear) {
+        alert('Not enough data');
+        return;
+    }
+
+    var init = gv('btCap') || 100000;
+    var wtEl = document.querySelector('input[name="wtMode"]:checked');
+    var mode = wtEl ? wtEl.value : 'eq';
+    var origS = $('btS') ? $('btS').value : '';
+    var origE = $('btE') ? $('btE').value : '';
+    var origH = $('btH') ? $('btH').value : '5';
+    var origPool = document.getElementById('poolMode') ? document.getElementById('poolMode').value : 'large';
+
+    if (document.getElementById('poolMode')) {
+        document.getElementById('poolMode').value = 'large';
+    }
+
+    sl('stressLog', 'Running WF N=2~15 comparison...', null);
+    showL('WF N Compare...');
+
+    setTimeout(function() {
+        try {
+            var scanN = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
+            var allResults = [];
+
+            for (var ni = 0; ni < scanN.length; ni++) {
+                var N = scanN[ni];
+                if ($('btH')) $('btH').value = N;
+                var oosMonths = [];
+
+                for (var ty = firstTestYear; ty + testWY - 1 <= lastYear; ty += testWY) {
+                    var tStart = ty + '-01';
+                    var tEnd = (ty + testWY - 1) + '-12';
+                    if ($('btS')) $('btS').value = tStart;
+                    if ($('btE')) $('btE').value = tEnd;
+
+                    var recs = runBTcore(N, mode);
+                    if (!recs || recs.length < 2) continue;
+                    recs.forEach(function(r) { oosMonths.push(r.pRet); });
+                }
+
+                if ($('btS')) $('btS').value = origS;
+                if ($('btE')) $('btE').value = origE;
+
+                if (!oosMonths.length) {
+                    allResults.push({ N: N, err: true });
+                    continue;
+                }
+
+                var sNav = init, sPeak = init, sMdd = 0;
+                oosMonths.forEach(function(r) {
+                    sNav *= (1 + r);
+                    if (sNav > sPeak) sPeak = sNav;
+                    var dd = (sNav - sPeak) / sPeak;
+                    if (dd < sMdd) sMdd = dd;
+                });
+
+                var sYrs = oosMonths.length / 12;
+                var sCagr = sYrs > 0 ? Math.pow(sNav / init, 1 / sYrs) - 1 : 0;
+                var sAvg = oosMonths.reduce(function(a, b) { return a + b; }, 0) / oosMonths.length;
+                var sStd = Math.sqrt(oosMonths.reduce(function(a, b) {
+                    return a + Math.pow(b - sAvg, 2);
+                }, 0) / oosMonths.length) * Math.sqrt(12);
+                var sSharpe = sStd > 0 ? (sCagr - 0.015) / sStd : 0;
+                var winRate = oosMonths.filter(function(r) { return r > 0; }).length / oosMonths.length;
+
+                allResults.push({
+                    N: N, cagr: sCagr, mdd: sMdd, sharpe: sSharpe,
+                    nav: sNav, months: oosMonths.length, winRate: winRate, err: false
+                });
+            }
+
+            if ($('btH')) $('btH').value = origH;
+            if (document.getElementById('poolMode')) {
+                document.getElementById('poolMode').value = origPool;
+            }
+
+            renderWFNCompare(allResults, init, minTY, testWY);
+            sl('stressLog', 'WF N Compare done: N=2~15', true);
+
+        } catch (e) {
+            if ($('btS')) $('btS').value = origS;
+            if ($('btE')) $('btE').value = origE;
+            if ($('btH')) $('btH').value = origH;
+            if (document.getElementById('poolMode')) {
+                document.getElementById('poolMode').value = origPool;
+            }
+            sl('stressLog', 'Error: ' + e.message, false);
+            console.error(e);
+        }
+        hideL();
+    }, 80);
+}
+
+function renderWFNCompare(results, init, minTY, testWY) {
+    function fp(v) { return (v >= 0 ? '+' : '') + (v * 100).toFixed(2) + '%'; }
+    function gc(v) { return v >= 0 ? 'var(--gr)' : 'var(--re)'; }
+    function sc(v) { return v >= 1.0 ? 'var(--gr)' : v >= 0.7 ? 'var(--ye)' : 'var(--re)'; }
+
+    var valid = results.filter(function(r) { return !r.err; });
+    if (!valid.length) return;
+
+    var bestCagr = valid.reduce(function(a, b) { return b.cagr > a.cagr ? b : a; });
+    var bestSharpe = valid.reduce(function(a, b) { return b.sharpe > a.sharpe ? b : a; });
+    var bestMdd = valid.reduce(function(a, b) { return b.mdd > a.mdd ? b : a; });
+
+    var html = '<div class="card" style="border-top:3px solid var(--ac);margin-bottom:10px;">';
+    html += '<div class="ct">WF N COMPARE (Large Pool, Train=' + minTY + 'Y, Test=' + testWY + 'Y)</div>';
+    html += '<div class="tw-wrap"><table><thead><tr>';
+    html += '<th>N</th><th>OOS CAGR</th><th>OOS MDD</th><th>OOS Sharpe</th><th>Win Rate</th><th>OOS Months</th><th>Final NAV</th>';
+    html += '</tr></thead><tbody>';
+
+    results.forEach(function(r) {
+        if (r.err) {
+            html += '<tr><td class="mono">' + r.N + '</td><td colspan="6" style="color:var(--mu)">no data</td></tr>';
+            return;
+        }
+        var isBestC = r.N === bestCagr.N;
+        var isBestS = r.N === bestSharpe.N;
+        var isBestM = r.N === bestMdd.N;
+        var rowStyle = (isBestC || isBestS) ? 'background:var(--sf2);' : '';
+        html += '<tr style="' + rowStyle + '">';
+        html += '<td class="mono" style="font-weight:700;color:' + (isBestS ? 'var(--gr)' : isBestC ? 'var(--tw)' : 'var(--tx)') + '">' + r.N + (isBestC ? ' *C' : '') + (isBestS ? ' *S' : '') + '</td>';
+        html += '<td class="mono" style="color:' + gc(r.cagr) + '">' + fp(r.cagr) + '</td>';
+        html += '<td class="mono" style="color:var(--re)">' + fp(r.mdd) + '</td>';
+        html += '<td class="mono" style="color:' + sc(r.sharpe) + '">' + r.sharpe.toFixed(2) + '</td>';
+        html += '<td class="mono" style="color:' + (r.winRate >= 0.6 ? 'var(--gr)' : 'var(--ye)') + '">' + (r.winRate * 100).toFixed(0) + '%</td>';
+        html += '<td class="mono" style="color:var(--mu)">' + r.months + '</td>';
+        html += '<td class="mono" style="color:var(--wh)">$' + Math.round(r.nav).toLocaleString() + '</td>';
+        html += '</tr>';
+    });
+    html += '</tbody></table></div>';
+    html += '<div style="font-size:10px;color:var(--mu);margin-bottom:10px;">*C = best CAGR | *S = best Sharpe | highlighted row = notable</div>';
+    html += '<div id="wfnChartWrap" style="position:relative;height:220px;margin-bottom:8px"><canvas id="wfnChart"></canvas></div>';
+    html += '</div>';
+
+    $('stressRes').classList.remove('hidden');
+    var el = $('stressMetrics');
+    if (el) el.innerHTML = el.innerHTML + html;
+
+    setTimeout(function() {
+        var ctx = document.getElementById('wfnChart');
+        if (!ctx || typeof Chart === 'undefined') return;
+        var labels = valid.map(function(r) { return 'N=' + r.N; });
+        var cagrData = valid.map(function(r) { return (r.cagr * 100).toFixed(2); });
+        var sharpeData = valid.map(function(r) { return r.sharpe.toFixed(2); });
+        var mddData = valid.map(function(r) { return (r.mdd * 100).toFixed(2); });
+        var gridColor = '#1a2030';
+        var tickColor = '#6b7a99';
+
+        new Chart(ctx.getContext('2d'), {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    { label: 'OOS CAGR %', data: cagrData, borderColor: '#00e5a0', borderWidth: 2, pointRadius: 4, yAxisID: 'y' },
+                    { label: 'OOS Sharpe', data: sharpeData, borderColor: '#ffb830', borderWidth: 2, pointRadius: 4, yAxisID: 'y2' },
+                    { label: 'OOS MDD %', data: mddData, borderColor: '#ff4d6d', borderWidth: 2, pointRadius: 4, borderDash: [4, 3], yAxisID: 'y' }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index', intersect: false },
+                animation: { duration: 300 },
+                plugins: { legend: { labels: { color: tickColor, boxWidth: 10, font: { size: 11 } } } },
+                scales: {
+                    x: { ticks: { color: tickColor }, grid: { color: gridColor } },
+                    y: { 
+                        position: 'left', 
+                        ticks: { color: tickColor, callback: function(v) { return v + '%'; } }, 
+                        grid: { color: gridColor }, 
+                        title: { display: true, text: 'CAGR / MDD %', color: tickColor, font: { size: 10 } } 
+                    },
+                    y2: { 
+                        position: 'right', 
+                        ticks: { color: '#ffb830' }, 
+                        grid: { drawOnChartArea: false }, 
+                        title: { display: true, text: 'Sharpe', color: '#ffb830', font: { size: 10 } } 
+                    }
+                }
+            }
+        });
+    }, 100);
 }
 
 </script>
