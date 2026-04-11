@@ -2630,18 +2630,7 @@ function renderWFNCompare(results, init, minTY, testWY) {
       }
 
       // ==== PART A: Large Pool, fixed ratio scale ====
-      // ETF=1 fixed, TW/US alternate as N grows
-      var partA = [];
-      var planA = [
-        {n:3, tw:1, us:1, etf:1},
-        {n:4, tw:2, us:1, etf:1},
-        {n:5, tw:2, us:2, etf:1},
-        {n:6, tw:3, us:2, etf:1},
-        {n:7, tw:3, us:3, etf:1},
-        {n:8, tw:4, us:3, etf:1},
-        {n:9, tw:4, us:4, etf:1},
-        {n:10, tw:5, us:4, etf:1}
-      ];
+      // ETF=1 fixed, TW/US alternate as N 
       // Part A uses large pool (N = total, pool ignored by runBTcore when mode=large)
       for (var ai = 0; ai < planA.length; ai++) {
         var p = planA[ai];
@@ -2649,6 +2638,17 @@ function renderWFNCompare(results, init, minTY, testWY) {
         var res = runOneWF('large', p.tw, p.us, p.etf, p.n);
         partA.push({ n: p.n, tw: p.tw, us: p.us, etf: p.etf, res: res });
       }
+var etfQ = parseInt(document.getElementById('wfETFQuota') ? document.getElementById('wfETFQuota').value : '1') || 1;
+var planA = [
+  { n: 2 + etfQ, tw: 1, us: 1, etf: etfQ },
+  { n: 3 + etfQ, tw: 2, us: 1, etf: etfQ },
+  { n: 4 + etfQ, tw: 2, us: 2, etf: etfQ },
+  { n: 5 + etfQ, tw: 3, us: 2, etf: etfQ },
+  { n: 6 + etfQ, tw: 3, us: 3, etf: etfQ },
+  { n: 7 + etfQ, tw: 4, us: 3, etf: etfQ },
+  { n: 8 + etfQ, tw: 4, us: 4, etf: etfQ },
+  { n: 9 + etfQ, tw: 5, us: 4, etf: etfQ }
+];
 
       // ==== PART B: Small Pool, ETF=1 fixed, TW x US matrix ====
       var partB = [];
@@ -2659,11 +2659,12 @@ function renderWFNCompare(results, init, minTY, testWY) {
       for (var ti = 0; ti < twRange.length; ti++) {
         partB.push([]);
         for (var ui = 0; ui < usRange.length; ui++) {
-          var tw = twRange[ti], us = usRange[ui], totalN = tw + us + 1;
-          bi++;
-          $('loadTxt').textContent = 'Part B: TW=' + tw + ' US=' + us + ' (' + bi + '/' + totalB + ')';
-          var res2 = runOneWF('small', tw, us, 1, totalN);
-          partB[ti].push({ tw: tw, us: us, etf: 1, n: totalN, res: res2 });
+          var tw = twRange[ti], us = usRange[ui], totalN = tw + us + etfQ;
+bi++;
+$('loadTxt').textContent = 'Part B: TW=' + tw + ' US=' + us + ' (' + bi + '/' + totalB + ')';
+var res2 = runOneWF('small', tw, us, etfQ, totalN);
+partB[ti].push({ tw: tw, us: us, etf: etfQ, n: totalN, res: res2 });
+
         }
       }
 
