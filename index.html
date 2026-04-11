@@ -2193,113 +2193,163 @@ function renderStress(cagrs, mdds, sharpes, label, simN) {
   if (el) el.innerHTML = el.innerHTML + html;
 }
   
-// ============================================================
-// WALK-FORWARD ANALYSIS - Add before </script>
-// ============================================================
-
 function runWalkForward() {
-if (!CACHE_BUILT) { alert(‘Build cache first’); return; }
-var minTY = parseInt($(‘wfMinTrain’) ? $(‘wfMinTrain’).value : ‘8’) || 8;
-var testWY = parseInt($(‘wfTestWin’) ? $(‘wfTestWin’).value : ‘1’) || 1;
-var masterTicker = DAILY[’^TWII’] ? ‘^TWII’ : (DAILY[‘SPY’] ? ‘SPY’ : null);
-if (!masterTicker) { alert(‘No benchmark data’); return; }
-var refDaily = DAILY[masterTicker];
-var freq = $(‘btFreq’) ? $(‘btFreq’).value : ‘1’;
-var allM = getPreciseRebalanceDates(refDaily, freq);
-if (!allM.length) return;
-var firstYear = parseInt(allM[0].slice(0, 4));
-var lastYear = parseInt(allM[allM.length - 1].slice(0, 4));
-var firstTestYear = firstYear + minTY;
-if (firstTestYear > lastYear) { alert(‘Not enough data for Walk-Forward’); return; }
-var init = gv(‘btCap’) || 100000;
-var mh = parseInt($(‘btH’) ? $(‘btH’).value : ‘5’) || 5;
-var mode = getWeightMode();
-var origS = $(‘btS’) ? $(‘btS’).value : ‘’;
-var origE = $(‘btE’) ? $(‘btE’).value : ‘’;
-sl(‘stressLog’, ‘Running Walk-Forward…’, null);
-showL(‘Walk-Forward Analysis…’);
-setTimeout(function() {
-try {
-var results = [], combinedOOS = [];
-for (var ty = firstTestYear; ty + testWY - 1 <= lastYear; ty += testWY) {
-var tStart = ty + ‘-01’;
-var tEnd = (ty + testWY - 1) + ‘-12’;
-if ($(‘btS’)) $(‘btS’).value = tStart;
-if ($(‘btE’)) $(‘btE’).value = tEnd;
-var oosRecs = runBTcore(mh, mode);
-if (!oosRecs || oosRecs.length < 2) continue;
-var oosInit = oosRecs[0].nav / (1 + oosRecs[0].pRet);
-var k = kpi(oosRecs, oosInit);
-oosRecs.forEach(function(r) { combinedOOS.push(r.pRet); });
-results.push({ period: tStart + ‘~’ + tEnd, months: oosRecs.length, cagr: k.cagr, mdd: k.mdd, sharpe: k.sharpe });
-}
-if ($(‘btS’)) $(‘btS’).value = origS;
-if ($(‘btE’)) $(‘btE’).value = origE;
-if (!combinedOOS.length) { sl(‘stressLog’, ‘No OOS results’, false); hideL(); return; }
-var sNav = init, sPeak = init, sMdd = 0;
-combinedOOS.forEach(function(r) { sNav *= (1 + r); if (sNav > sPeak) sPeak = sNav; var dd = (sNav - sPeak) / sPeak; if (dd < sMdd) sMdd = dd; });
-var sYrs = combinedOOS.length / 12;
-var sCagr = sYrs > 0 ? Math.pow(sNav / init, 1 / sYrs) - 1 : 0;
-var sAvg = combinedOOS.reduce(function(a, b) { return a + b; }, 0) / combinedOOS.length;
-var sStd = Math.sqrt(combinedOOS.reduce(function(a, b) { return a + Math.pow(b - sAvg, 2); }, 0) / combinedOOS.length) * Math.sqrt(12);
-var sSharpe = sStd > 0 ? (sCagr - 0.015) / sStd : 0;
-renderWalkForward(results, { cagr: sCagr, mdd: sMdd, sharpe: sSharpe, months: combinedOOS.length });
-sl(‘stressLog’, ‘Walk-Forward: ’ + results.length + ’ windows, OOS=’ + combinedOOS.length + ‘mo’, true);
-} catch (e) {
-if ($(‘btS’)) $(‘btS’).value = origS;
-if ($(‘btE’)) $(‘btE’).value = origE;
-sl(‘stressLog’, ’Error: ’ + e.message, false);
-console.error(e);
-}
-hideL();
-}, 80);
+    if (!CACHE_BUILT) {
+        alert('Build cache first');
+        return;
+    }
+
+    var minTY = parseInt($('wfMinTrain') ? $('wfMinTrain').value : '8') || 8;
+    var testWY = parseInt($('wfTestWin') ? $('wfTestWin').value : '1') || 1;
+    var masterTicker = DAILY['^TWII'] ? '^TWII' : (DAILY['SPY'] ? 'SPY' : null);
+
+    if (!masterTicker) {
+        alert('No benchmark data');
+        return;
+    }
+
+    var refDaily = DAILY[masterTicker];
+    var freq = $('btFreq') ? $('btFreq').value : '1';
+    var allM = getPreciseRebalanceDates(refDaily, freq);
+
+    if (!allM.length) return;
+
+    var firstYear = parseInt(allM[0].slice(0, 4));
+    var lastYear = parseInt(allM[allM.length - 1].slice(0, 4));
+    var firstTestYear = firstYear + minTY;
+
+    if (firstTestYear > lastYear) {
+        alert('Not enough data for Walk-Forward');
+        return;
+    }
+
+    var init = gv('btCap') || 100000;
+    var mh = parseInt($('btH') ? $('btH').value : '5') || 5;
+    var mode = getWeightMode();
+    var origS = $('btS') ? $('btS').value : '';
+    var origE = $('btE') ? $('btE').value : '';
+
+    sl('stressLog', 'Running Walk-Forward...', null);
+    showL('Walk-Forward Analysis...');
+
+    setTimeout(function() {
+        try {
+            var results = [], combinedOOS = [];
+            for (var ty = firstTestYear; ty + testWY - 1 <= lastYear; ty += testWY) {
+                var tStart = ty + '-01';
+                var tEnd = (ty + testWY - 1) + '-12';
+
+                if ($('btS')) $('btS').value = tStart;
+                if ($('btE')) $('btE').value = tEnd;
+
+                var oosRecs = runBTcore(mh, mode);
+                if (!oosRecs || oosRecs.length < 2) continue;
+
+                var oosInit = oosRecs[0].nav / (1 + oosRecs[0].pRet);
+                var k = kpi(oosRecs, oosInit);
+
+                oosRecs.forEach(function(r) { combinedOOS.push(r.pRet); });
+                results.push({
+                    period: tStart + '~' + tEnd,
+                    months: oosRecs.length,
+                    cagr: k.cagr,
+                    mdd: k.mdd,
+                    sharpe: k.sharpe
+                });
+            }
+
+            if ($('btS')) $('btS').value = origS;
+            if ($('btE')) $('btE').value = origE;
+
+            if (!combinedOOS.length) {
+                sl('stressLog', 'No OOS results', false);
+                hideL();
+                return;
+            }
+
+            var sNav = init, sPeak = init, sMdd = 0;
+            combinedOOS.forEach(function(r) {
+                sNav *= (1 + r);
+                if (sNav > sPeak) sPeak = sNav;
+                var dd = (sNav - sPeak) / sPeak;
+                if (dd < sMdd) sMdd = dd;
+            });
+
+            var sYrs = combinedOOS.length / 12;
+            var sCagr = sYrs > 0 ? Math.pow(sNav / init, 1 / sYrs) - 1 : 0;
+            var sAvg = combinedOOS.reduce(function(a, b) { return a + b; }, 0) / combinedOOS.length;
+            var sStd = Math.sqrt(combinedOOS.reduce(function(a, b) { return a + Math.pow(b - sAvg, 2); }, 0) / combinedOOS.length) * Math.sqrt(12);
+            var sSharpe = sStd > 0 ? (sCagr - 0.015) / sStd : 0;
+
+            renderWalkForward(results, { cagr: sCagr, mdd: sMdd, sharpe: sSharpe, months: combinedOOS.length });
+            sl('stressLog', 'Walk-Forward: ' + results.length + ' windows, OOS=' + combinedOOS.length + 'mo', true);
+
+        } catch (e) {
+            if ($('btS')) $('btS').value = origS;
+            if ($('btE')) $('btE').value = origE;
+            sl('stressLog', 'Error: ' + e.message, false);
+            console.error(e);
+        }
+        hideL();
+    }, 80);
 }
 
 function renderWalkForward(results, spliced) {
-function fp(v) { return (v >= 0 ? ‘+’ : ‘’) + (v * 100).toFixed(2) + ‘%’; }
-function gc(v) { return v >= 0 ? ‘var(–gr)’ : ‘var(–re)’; }
-var isCAGR = null;
-if (BT_RESULT) { try { isCAGR = kpi(BT_RESULT.records, BT_RESULT.initial).cagr; } catch (e) {} }
-var html = ‘<div class="card" style="border-top:3px solid var(--ye);margin-bottom:10px;">’;
-html += ‘<div class="ct">WALK-FORWARD ANALYSIS (ANCHORED)</div>’;
-html += ‘<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px;">’;
-html += ‘<div class="card" style="border-top:2px solid var(--gr);padding:9px;"><div style="font-size:10px;font-weight:700;color:var(--mu);margin-bottom:4px">OOS CAGR (spliced)</div>’;
-html += ‘<div class="mono" style="font-size:20px;color:' + gc(spliced.cagr) + '">’ + fp(spliced.cagr) + ‘</div></div>’;
-html += ‘<div class="card" style="border-top:2px solid var(--re);padding:9px;"><div style="font-size:10px;font-weight:700;color:var(--mu);margin-bottom:4px">OOS MDD (spliced)</div>’;
-html += ‘<div class="mono" style="font-size:20px;color:var(--re)">’ + fp(spliced.mdd) + ‘</div></div>’;
-html += ‘<div class="card" style="border-top:2px solid var(--bl);padding:9px;"><div style="font-size:10px;font-weight:700;color:var(--mu);margin-bottom:4px">OOS Sharpe (spliced)</div>’;
-html += ‘<div class="mono" style="font-size:20px;color:' + gc(spliced.sharpe) + '">’ + spliced.sharpe.toFixed(2) + ‘</div></div>’;
-html += ‘</div>’;
-if (isCAGR !== null && isCAGR !== 0) {
-var ratio = spliced.cagr / isCAGR;
-var ratioCol = ratio >= 0.6 ? ‘var(–gr)’ : ratio >= 0.4 ? ‘var(–ye)’ : ‘var(–re)’;
-var verdict = ratio >= 0.6 ? ‘PASS - Real Edge’ : ratio >= 0.4 ? ‘WARN - Partial Decay’ : ‘FAIL - Overfitting Signal’;
-html += ‘<div style="background:var(--sf2);border:1px solid var(--bd);padding:8px;font-size:12px;margin-bottom:10px;">’;
-html += ‘IS CAGR: <b style="color:var(--ye)">’ + fp(isCAGR) + ‘</b>’;
-html += ’ | OOS/IS: <b style="color:' + ratioCol + '">’ + (ratio * 100).toFixed(0) + ‘%</b>’;
-html += ’ | <b style="color:' + ratioCol + '">’ + verdict + ‘</b></div>’;
+    function fp(v) { return (v >= 0 ? '+' : '') + (v * 100).toFixed(2) + '%'; }
+    function gc(v) { return v >= 0 ? 'var(--gr)' : 'var(--re)'; }
+
+    var isCAGR = null;
+    if (typeof BT_RESULT !== 'undefined' && BT_RESULT) {
+        try { isCAGR = kpi(BT_RESULT.records, BT_RESULT.initial).cagr; } catch (e) {}
+    }
+
+    var html = '<div class="card" style="border-top:3px solid var(--ye);margin-bottom:10px;">';
+    html += '<div class="ct">WALK-FORWARD ANALYSIS (ANCHORED)</div>';
+    html += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:10px;">';
+    html += '<div class="card" style="border-top:2px solid var(--gr);padding:9px;"><div style="font-size:10px;font-weight:700;color:var(--mu);margin-bottom:4px">OOS CAGR (spliced)</div>';
+    html += '<div class="mono" style="font-size:20px;color:' + gc(spliced.cagr) + '">' + fp(spliced.cagr) + '</div></div>';
+    html += '<div class="card" style="border-top:2px solid var(--re);padding:9px;"><div style="font-size:10px;font-weight:700;color:var(--mu);margin-bottom:4px">OOS MDD (spliced)</div>';
+    html += '<div class="mono" style="font-size:20px;color:var(--re)">' + fp(spliced.mdd) + '</div></div>';
+    html += '<div class="card" style="border-top:2px solid var(--bl);padding:9px;"><div style="font-size:10px;font-weight:700;color:var(--mu);margin-bottom:4px">OOS Sharpe (spliced)</div>';
+    html += '<div class="mono" style="font-size:20px;color:' + gc(spliced.sharpe) + '">' + spliced.sharpe.toFixed(2) + '</div></div>';
+    html += '</div>';
+
+    if (isCAGR !== null && isCAGR !== 0) {
+        var ratio = spliced.cagr / isCAGR;
+        var ratioCol = ratio >= 0.6 ? 'var(--gr)' : ratio >= 0.4 ? 'var(--ye)' : 'var(--re)';
+        var verdict = ratio >= 0.6 ? 'PASS - Real Edge' : ratio >= 0.4 ? 'WARN - Partial Decay' : 'FAIL - Overfitting Signal';
+        html += '<div style="background:var(--sf2);border:1px solid var(--bd);padding:8px;font-size:12px;margin-bottom:10px;">';
+        html += 'IS CAGR: <b style="color:var(--ye)">' + fp(isCAGR) + '</b>';
+        html += ' | OOS/IS: <b style="color:' + ratioCol + '">' + (ratio * 100).toFixed(0) + '%</b>';
+        html += ' | <b style="color:' + ratioCol + '">' + verdict + '</b></div>';
+    }
+
+    var winCount = results.filter(function(r) { return r.cagr > 0; }).length;
+    var winRate = results.length > 0 ? winCount / results.length : 0;
+    html += '<div style="font-size:11px;color:var(--mu);margin-bottom:6px;">Win rate(CAGR>0): <b style="color:' + (winRate >= 0.7 ? 'var(--gr)' : winRate >= 0.5 ? 'var(--ye)' : 'var(--re)') + '">' + (winRate * 100).toFixed(0) + '%</b>';
+    html += ' (' + winCount + '/' + results.length + ' windows) | OOS months: <b>' + spliced.months + '</b></div>';
+    html += '<div class="tw-wrap"><table><thead><tr><th>OOS Period</th><th>Mo</th><th>CAGR</th><th>MDD</th><th>Sharpe</th><th>Status</th></tr></thead><tbody>';
+
+    results.forEach(function(r) {
+        var ok = r.cagr > 0;
+        html += '<tr><td class="mono" style="font-size:11px">' + r.period + '</td>';
+        html += '<td class="mono">' + r.months + '</td>';
+        html += '<td class="mono" style="color:' + gc(r.cagr) + '">' + fp(r.cagr) + '</td>';
+        html += '<td class="mono" style="color:var(--re)">' + fp(r.mdd) + '</td>';
+        html += '<td class="mono" style="color:' + gc(r.sharpe) + '">' + r.sharpe.toFixed(2) + '</td>';
+        html += '<td style="color:' + (ok ? 'var(--gr)' : 'var(--re)') + ';font-size:11px">' + (ok ? 'Profit' : 'Loss') + '</td></tr>';
+    });
+
+    html += '</tbody></table></div>';
+    html += '<div style="font-size:10px;color:var(--mu);margin-top:8px;">Verdict: OOS/IS >= 60% PASS | 40-60% WARN | <40% Overfitting</div>';
+    html += '</div>';
+
+    var container = $('stressRes');
+    if (container) container.classList.remove('hidden');
+    var el = $('stressMetrics');
+    if (el) el.innerHTML = el.innerHTML + html;
 }
-var winCount = results.filter(function(r) { return r.cagr > 0; }).length;
-var winRate = results.length > 0 ? winCount / results.length : 0;
-html += ‘<div style="font-size:11px;color:var(--mu);margin-bottom:6px;">Win rate(CAGR>0): <b style="color:' + (winRate >= 0.7 ? 'var(--gr)' : winRate >= 0.5 ? 'var(--ye)' : 'var(--re)') + '">’ + (winRate * 100).toFixed(0) + ‘%</b>’;
-html += ’ (’ + winCount + ‘/’ + results.length + ’ windows) | OOS months: <b>’ + spliced.months + ‘</b></div>’;
-html += ‘<div class="tw-wrap"><table><thead><tr><th>OOS Period</th><th>Mo</th><th>CAGR</th><th>MDD</th><th>Sharpe</th><th>Status</th></tr></thead><tbody>’;
-results.forEach(function(r) {
-var ok = r.cagr > 0;
-html += ‘<tr><td class="mono" style="font-size:11px">’ + r.period + ‘</td>’;
-html += ‘<td class="mono">’ + r.months + ‘</td>’;
-html += ‘<td class="mono" style="color:' + gc(r.cagr) + '">’ + fp(r.cagr) + ‘</td>’;
-html += ‘<td class="mono" style="color:var(--re)">’ + fp(r.mdd) + ‘</td>’;
-html += ‘<td class="mono" style="color:' + gc(r.sharpe) + '">’ + r.sharpe.toFixed(2) + ‘</td>’;
-html += ‘<td style="color:' + (ok ? 'var(--gr)' : 'var(--re)') + ';font-size:11px">’ + (ok ? ‘Profit’ : ‘Loss’) + ‘</td></tr>’;
-});
-html += ‘</tbody></table></div>’;
-html += ‘<div style="font-size:10px;color:var(--mu);margin-top:8px;">Verdict: OOS/IS >= 60% PASS | 40-60% WARN | <40% Overfitting</div>’;
-html += ‘</div>’;
-$(‘stressRes’).classList.remove(‘hidden’);
-var el = $(‘stressMetrics’);
-if (el) el.innerHTML = el.innerHTML + html;
-}
+
 </script>
 
 
