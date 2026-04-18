@@ -808,18 +808,22 @@ function updFetchStat(){
 }
 
 // 解決原本 JS 同名函數互相覆寫的問題，更名為 calcVolatility 供 IVOL 使用
-function calcVolatility(bars, win) {
+function calcVolatility(bars, dateStr, win) {
   if (!bars || bars.length < win) return null;
+  var endIdx = -1;
+  for (var i = bars.length - 1; i >= 0; i--) {
+    if (bars[i].date <= dateStr) { endIdx = i; break; }
+  }
+  if (endIdx < win) return null;
   var rets = [];
-  for (var j = bars.length - win + 1; j < bars.length; j++) {
+  for (var j = endIdx - win + 1; j <= endIdx; j++) {
     if (bars[j-1] && bars[j].c > 0 && bars[j-1].c > 0) {
       rets.push(bars[j].c / bars[j-1].c - 1);
     }
   }
   if (rets.length < 10) return null;
-  var mean = rets.reduce(function(a, b) { return a + b; }, 0) / rets.length;
-  // 使用 N-1 樣本變異數
-  var variance = rets.reduce(function(a, b) { return a + Math.pow(b - mean, 2); }, 0) / (rets.length > 1 ? rets.length - 1 : 1);
+  var mean = rets.reduce(function(a, b){ return a + b; }, 0) / rets.length;
+  var variance = rets.reduce(function(a, b){ return a + Math.pow(b - mean, 2); }, 0) / (rets.length > 1 ? rets.length - 1 : 1);
   return Math.sqrt(variance * 252);
 }
 
@@ -1271,13 +1275,12 @@ function runBTcore(mh, mode) {
         sel.forEach(function(r, i) { target[r.s.c] = lScale * ((sel.length - i) / ldenom) * exposure; });
       } else if (wtMode === 'ivol') {
         var volSum = 0;
-        var ivolArr = sel.map(function(r) {
-          var bars = DAILY[r.s.c];
-          var cut = bars.filter(b => b.date <= scoreM);
-          var v = calcVolatility(cut, 60);
-          v = (v && v > 0) ? v : 0.20;
-          volSum += 1 / v;
-          return { c: r.s.c, iv: 1 / v };
+        var ivolArr=sel.map(function(r){
+          var bars=DAILY[r.s.c];
+          var v=calcVolatility(bars,scoreM,60);
+          v=(v&&v>0)?v:0.20;
+          volSum+=1/v;
+          return {c:r.s.c,iv:1/v };
         });
         ivolArr.forEach(function(x) {
           target[x.c] = (lScale * x.iv / volSum) * exposure;
