@@ -1138,9 +1138,8 @@ function runBTcore(mh, mode) {
         }
       });
     }
-var totalQuota = poolModeSetting==='large' ? ... // 這行被你的新版取代了
-
-            var slots = totalQuota - sel.length;
+    var totalQuota = poolModeSetting==='large' ? (parseInt(document.getElementById('btH').value)||5) : (parseInt($('btQuotaTW')?$('btQuotaTW').value:'2')||0)+(parseInt($('btQuotaUS')?$('btQuotaUS').value:'2')||0)+(parseInt($('btQuotaETF')?$('btQuotaETF').value:'1')||0);
+    var slots = totalQuota - sel.length;
     if (slots > 0) {
       var hasSGOV = DAILY['SGOV'] && DAILY['SGOV'].length > 0 && getPriceOnDate(DAILY['SGOV'], scoreM) !== null;
       if (hasSGOV) {
@@ -1151,8 +1150,6 @@ var totalQuota = poolModeSetting==='large' ? ... // 這行被你的新版取代�
         for (var ks3=0; ks3<slots; ks3++) sel.push(cashFill);
       }
     }
-
-
 
     var selS=[];
     if (shortN>0) {
@@ -1166,6 +1163,7 @@ var totalQuota = poolModeSetting==='large' ? ... // 這行被你的新版取代�
         if (selS.every(function(x){ return Math.abs(calcCorr(candS.s.c,x.s.c,scoreM))<ct; })) selS.push(candS);
       }
     }
+
 
     var exposure=1.0;
     if (regimeOn&&isBearishRegime(refDaily,scoreM,60)) exposure=regimeExp/100;
