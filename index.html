@@ -1139,15 +1139,18 @@ function runBTcore(mh, mode) {
       });
     }
 
-        var totalQuota = poolModeSetting==='large' ? (parseInt(document.getElementById('btH').value)||5) : (parseInt($('btQuotaTW')?$('btQuotaTW').value:'2')||0)+(parseInt($('btQuotaUS')?$('btQuotaUS').value:'2')||0)+(parseInt($('btQuotaETF')?$('btQuotaETF').value:'1')||0);
-    var slots = totalQuota - sel.length;
+            var slots = totalQuota - sel.length;
     if (slots > 0) {
       var hasSGOV = DAILY['SGOV'] && DAILY['SGOV'].length > 0 && getPriceOnDate(DAILY['SGOV'], scoreM) !== null;
       if (hasSGOV) {
         var sgovFill={s:{c:'SGOV',n:'0-3M Treasury',pool:'etf',tw:false},score:0,r240:0,zm:0,zb:0,zs:0,zv:0,zk:0};
         for (var ks2=0; ks2<slots; ks2++) sel.push(sgovFill);
+      } else {
+        var cashFill={s:{c:'CASH',n:'Cash',pool:'etf',tw:false},score:0,r240:0,zm:0,zb:0,zs:0,zv:0,zk:0};
+        for (var ks3=0; ks3<slots; ks3++) sel.push(cashFill);
       }
     }
+
 
 
     var selS=[];
